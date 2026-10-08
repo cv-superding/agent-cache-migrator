@@ -1,0 +1,20 @@
+# 依赖与构建产物
+node_modules/
+dist/
+dist.bak-*/
+target/
+*.prev
+
+# Tauri 自动生成的 schema（各机器重建，不入库）
+src-tauri/gen/schemas/
+
+# 本地配置与日志
+.env
+*.local.toml
+*.log
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,53 @@
+[package]
+name = "agentcache"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "AgentCache 桌面端（Tauri 壳）"
+
+[lib]
+# `_lib` 后缀是为了让 lib 名与 bin 名不冲突（Windows 上的已知问题）
+name = "agentcache_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+# 🔴 必须默认开 `custom-protocol`：不开的话 `cargo build --release` 会产出一个
+# 「去加载 devUrl（http://localhost:1422）」的开发模式 exe —— vite 没跑时窗口直接
+# 报「localhost 拒绝连接」，而不是加载内嵌的前端。
+#   · `tauri dev`   会传 `--no-default-features` 并自己过滤掉这个 feature
+#   · `tauri build` 显式传 `tauri/custom-protocol`
+# 所以默认开它是安全的，且能保证手动 `cargo build --release` 拿到的是可用产物。
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+# 见下面 [dependencies] 里的说明 —— build-dependencies 那一侧也要统一。
+# （resolver = 2 不会把 build-dep 和普通依赖的 feature 合并，两边得各写一遍。）
+indexmap = { version = "1.9", features = ["std"] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+acm-core = { path = "../crates/acm-core" }
+serde.workspace = true
+serde_json.workspace = true
+
+# 🔴 这不是「用不到的多余依赖」，是**修 bug 用的 feature 统一**。
+#
+# `tauri-utils` / `tauri-build` 依赖 `schemars 0.8.22`，而 schemars 的
+# `preserve_order` feature 会用 `indexmap::IndexMap`；但它的依赖声明只开了
+# `serde-1`、**没开 `std`**。
+#
+# 而 `indexmap 1.9.3` 的 build.rs 是这样的：
+#   Some(_) => autocfg::emit("has_std"),              // 显式开了 std feature
+#   None    => autocfg::new().emit_sysroot_crate("std"),  // 否则去探测 sysroot
+# 探测这条路在 rustc 1.98 上**探测不到** → `has_std` 没设上 →
+# 走 `#[cfg(not(has_std))] struct IndexMap<K, V, S>`（**没有默认参数**）→
+# schemars 的 `type Map<K,V> = indexmap::IndexMap<K,V>` 直接 E0107 编译失败。
+#
+# 只要有人显式开 `std`，就走第一条分支、不再探测。这里就是这个「有人」。
+# （wb-switch 之所以没撞上：它的 schemars 是更早的 rustc 编出来的缓存产物。）
+indexmap = { version = "1.9", features = ["std"] }

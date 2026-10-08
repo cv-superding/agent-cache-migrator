@@ -1,0 +1,16 @@
+[package]
+name = "acm-cli"
+description = "AgentCache 命令行：检测 / 迁移 / 回滚（GUI 之外的验证与排障入口）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "acm"
+path = "src/main.rs"
+
+[dependencies]
+acm-core = { path = "../acm-core" }
+serde.workspace = true
+serde_json.workspace = true

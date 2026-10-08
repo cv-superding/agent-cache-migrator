@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "AgentCache 默认权限：只开核心能力 + 用系统默认程序打开路径。\n刻意不开 fs 插件 —— 所有文件操作都走我们自己的 Rust 命令（内核里已有安全校验）。",
+  "windows": ["main"],
+  "permissions": ["core:default", "opener:default"]
+}

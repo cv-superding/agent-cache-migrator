@@ -1,0 +1,21 @@
+# 统一换行符：源码一律 LF。
+# ⚠️ 本机 `core.autocrlf=true`，不加这条的话提交进仓库的会是 CRLF ——
+# 跨平台协作时脚本/markdown 混用 CRLF 和 LF 会出各种怪问题。
+# `.gitattributes` 的优先级高于 `core.autocrlf`，所以这一条就够。
+* text=auto eol=lf
+
+# 二进制：别做任何换行转换
+*.png  binary
+*.ico  binary
+*.icns binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+
+# 这些在 Windows 上本来就该是 CRLF，交给 git 按平台处理
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# 语言统计时别把这些算进去
+package-lock.json  linguist-generated
+Cargo.lock         linguist-generated

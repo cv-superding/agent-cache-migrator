@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentCache · 缓存迁移器（布局稿）</title>
+<style>
+  :root{
+    --bg:#f5f5f6; --panel:#ffffff; --side:#fbfbfc; --line:#e7e7ea; --line2:#efeff2;
+    --fg:#18181b; --muted:#71717a; --faint:#a1a1aa;
+    --ink:#111827; --ok:#15803d; --okbg:#f0fdf4; --okline:#bbf7d0;
+    --warn:#b45309; --warnbg:#fffbeb; --warnline:#fde68a;
+    --info:#1d4ed8; --infobg:#eff6ff; --infoline:#bfdbfe;
+    --mono:ui-monospace,"Cascadia Mono","SFMono-Regular",Consolas,"Liberation Mono",monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.55 var(--sans);-webkit-font-smoothing:antialiased}
+  button{font:inherit;color:inherit;cursor:pointer}
+  code{font-family:var(--mono);font-size:11.5px;background:#f4f4f5;border-radius:4px;padding:1px 5px}
+
+  /* ---------- 应用外框（模拟桌面窗口） ---------- */
+  .win{max-width:1180px;margin:22px auto;background:var(--panel);border:1px solid var(--line);
+       border-radius:14px;overflow:hidden;box-shadow:0 10px 34px rgba(0,0,0,.09);display:flex;min-height:760px}
+  .side{width:236px;flex:none;background:var(--side);border-right:1px solid var(--line);
+        display:flex;flex-direction:column;padding:16px 12px 12px}
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+
+  /* ---------- 侧栏 ---------- */
+  .brand{display:flex;align-items:center;gap:9px;padding:2px 6px 16px}
+  .logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(140deg,#0f172a,#3f4a60);
+        display:grid;place-items:center;color:#fff;font-size:15px;flex:none}
+  .brand b{display:block;font-size:13.5px;letter-spacing:.2px}
+  .brand span{display:block;font-size:11px;color:var(--faint);font-family:var(--mono)}
+  .navlabel{font-size:11px;color:var(--faint);padding:12px 8px 5px;letter-spacing:.3px}
+  .nav{display:flex;flex-direction:column;gap:2px}
+  .item{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:8px;border:0;background:none;
+        text-align:left;width:100%;color:#3f3f46}
+  .item:hover{background:#f1f1f3}
+  .item.on{background:#eaeaec;color:var(--fg);font-weight:600}
+  .item .ic{width:19px;height:19px;flex:none;border-radius:5px;display:grid;place-items:center;
+            font-size:10px;font-weight:700;color:#fff;background:#94a3b8}
+  .item .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px}
+  .dot{width:6px;height:6px;border-radius:50%;flex:none}
+  .dot.free{background:#d4d4d8}.dot.moved{background:#22c55e}.dot.run{background:#f59e0b}
+  .sidefoot{margin-top:auto;padding:10px 8px 2px;border-top:1px solid var(--line2);font-size:11px;color:var(--faint)}
+
+  /* ---------- 主区 ---------- */
+  .head{padding:22px 26px 14px;border-bottom:1px solid var(--line2)}
+  .head h1{margin:0;font-size:21px;letter-spacing:-.2px}
+  .head p{margin:6px 0 0;color:var(--muted);font-size:12.5px}
+  .body{padding:18px 26px 26px;display:flex;flex-direction:column;gap:14px;overflow:auto}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px}
+  .card>h2{margin:0;padding:13px 16px 0;font-size:13.5px;display:flex;align-items:center;gap:8px}
+  .card>h2 .sub{font-weight:400;color:var(--faint);font-size:11.5px}
+  .card .inner{padding:12px 16px 15px}
+  .rows{display:flex;flex-direction:column}
+  .row{display:flex;gap:12px;padding:7px 0;border-bottom:1px dashed var(--line2);align-items:flex-start}
+  .row:last-child{border-bottom:0}
+  .row .k{width:86px;flex:none;color:var(--muted);font-size:12px;padding-top:1px}
+  .row .v{flex:1;min-width:0;word-break:break-all}
+  .mono{font-family:var(--mono);font-size:11.5px}
+
+  .badge{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 8px;border-radius:999px;
+         font-size:11px;font-weight:500;border:1px solid transparent}
+  .b-ok{background:var(--okbg);color:var(--ok);border-color:var(--okline)}
+  .b-warn{background:var(--warnbg);color:var(--warn);border-color:var(--warnline)}
+  .b-info{background:var(--infobg);color:var(--info);border-color:var(--infoline)}
+  .b-gray{background:#f4f4f5;color:var(--muted);border-color:#e4e4e7}
+
+  /* 盘符卡片 */
+  .drives{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:9px}
+  .drv{border:1px solid var(--line);border-radius:10px;padding:10px 11px;background:#fff;text-align:left;
+       display:flex;flex-direction:column;gap:6px}
+  .drv:hover{border-color:#c7c7cf}
+  .drv.on{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink) inset;background:#fafafa}
+  .drv .t{display:flex;align-items:center;justify-content:space-between;font-weight:600;font-size:12.5px}
+  .drv .bar{height:5px;border-radius:3px;background:#ececef;overflow:hidden}
+  .drv .bar i{display:block;height:100%;background:#94a3b8}
+  .drv.on .bar i{background:var(--ink)}
+  .drv .m{font-size:11px;color:var(--muted);font-family:var(--mono)}
+
+  .field{display:flex;gap:8px;align-items:center}
+  input[type=text]{flex:1;min-width:0;height:32px;border:1px solid var(--line);border-radius:8px;padding:0 10px;
+                   font-family:var(--mono);font-size:11.5px;background:#fff;color:var(--fg)}
+  input[type=text]:focus{outline:none;border-color:#a1a1aa;box-shadow:0 0 0 3px #f1f1f3}
+  .btn{height:32px;padding:0 13px;border-radius:8px;border:1px solid var(--line);background:#fff;font-size:12.5px}
+  .btn:hover{background:#f7f7f8}
+  .btn.pri{background:var(--ink);border-color:var(--ink);color:#fff}
+  .btn.pri:hover{background:#000}
+  .btn.sm{height:27px;padding:0 10px;font-size:12px}
+  .btn[disabled]{opacity:.45;cursor:not-allowed}
+
+  .opts{display:flex;flex-direction:column;gap:9px;margin-top:2px}
+  .opt{display:flex;gap:9px;align-items:flex-start}
+  .opt input{margin:3px 0 0}
+  .opt .l{font-size:12.5px}
+  .opt .d{font-size:11.5px;color:var(--muted)}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:#fff}
+  .seg button{border:0;background:none;padding:7px 12px;font-size:12.5px;border-right:1px solid var(--line2)}
+  .seg button:last-child{border-right:0}
+  .seg button.on{background:#eaeaec;font-weight:600}
+
+  .note{border-radius:10px;padding:9px 12px;font-size:12px;border:1px solid}
+  .note.warn{background:var(--warnbg);border-color:var(--warnline);color:#7c2d12}
+  .note.info{background:var(--infobg);border-color:var(--infoline);color:#1e3a8a}
+  .note.ok{background:var(--okbg);border-color:var(--okline);color:#14532d}
+
+  .bar-prog{height:7px;border-radius:4px;background:#ececef;overflow:hidden}
+  .bar-prog i{display:block;height:100%;width:62%;background:var(--ink)}
+  .steps{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+  .step{font-size:11px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);color:var(--muted);background:#fff}
+  .step.done{background:var(--okbg);border-color:var(--okline);color:var(--ok)}
+  .step.now{background:var(--ink);border-color:var(--ink);color:#fff}
+  pre.log{margin:10px 0 0;background:#0f172a;color:#cbd5e1;border-radius:9px;padding:11px 12px;
+          font-family:var(--mono);font-size:11px;line-height:1.62;max-height:168px;overflow:auto;white-space:pre-wrap}
+
+  table.t{width:100%;border-collapse:collapse;font-size:12px}
+  table.t th{text-align:left;color:var(--muted);font-weight:500;font-size:11.5px;padding:0 8px 6px}
+  table.t td{padding:7px 8px;border-top:1px solid var(--line2);vertical-align:middle}
+  table.t td.mono{font-family:var(--mono);font-size:11.5px}
+
+  .foot{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 26px;border-top:1px solid var(--line2);
+        color:var(--faint);font-size:11.5px;background:#fcfcfd}
+  .foot .sp{flex:1}
+</style>
+</head>
+<body>
+<div class="win">
+
+  <!-- ================= 侧栏 ================= -->
+  <aside class="side">
+    <div class="brand">
+      <div class="logo">⇄</div>
+      <div><b>AgentCache</b><span>v0.1.0 · MIT</span></div>
+    </div>
+
+    <div class="navlabel">迁移目标（自动检测）</div>
+    <nav class="nav" id="nav"></nav>
+
+    <div class="navlabel">工具</div>
+    <nav class="nav">
+      <button class="item"><span class="ic" style="background:#64748b">◔</span><span class="nm">磁盘占用分析</span></button>
+      <button class="item"><span class="ic" style="background:#0891b2">+</span><span class="nm">新增自定义 Agent</span></button>
+      <button class="item"><span class="ic" style="background:#7c3aed">⚙</span><span class="nm">设置</span></button>
+      <button class="item"><span class="ic" style="background:#334155">?</span><span class="nm">关于 / 开源许可</span></button>
+    </nav>
+
+    <div class="sidefoot">
+      检测到 <b style="color:#3f3f46">12</b> 个 · 已迁移 <b style="color:#15803d">2</b>
+    </div>
+  </aside>
+
+  <!-- ================= 主区 ================= -->
+  <section class="main">
+    <header class="head">
+      <h1 id="title">WorkBuddy 国内版</h1>
+      <p id="subtitle">腾讯 WorkBuddy 桌面端 · 数据目录 <code>.workbuddy</code> · 已迁移</p>
+    </header>
+
+    <div class="body">
+
+      <!-- ① 当前状态 -->
+      <div class="card">
+        <h2>当前状态 <span class="sub">只读检测，不改任何东西</span></h2>
+        <div class="inner">
+          <div class="rows" id="statusRows"></div>
+          <div id="statusNote"></div>
+        </div>
+      </div>
+
+      <!-- ② 迁移到 -->
+      <div class="card">
+        <h2>迁移到 <span class="sub">左边选盘，右边确认路径</span></h2>
+        <div class="inner">
+          <div class="drives" id="drives"></div>
+
+          <div style="margin-top:13px">
+            <div class="row" style="border:0;padding:0 0 6px">
+              <div class="k">目标路径</div>
+              <div class="v">
+                <div class="field">
+                  <input type="text" id="destPath" value="F:\.WBcache\.workbuddy">
+                  <button class="btn sm">浏览…</button>
+                  <button class="btn sm">用默认</button>
+                </div>
+              </div>
+            </div>
+            <div class="row" style="border:0;padding:4px 0 0">
+              <div class="k">最终落点</div>
+              <div class="v mono" id="finalPath">F:\.WBcache\.workbuddy</div>
+            </div>
+          </div>
+          <div style="margin-top:14px">
+            <div class="k" style="color:var(--muted);font-size:12px;padding-bottom:6px">迁移方式</div>
+            <div class="seg">
+              <button class="on">整份搬移（推荐）</button>
+              <button>复制一份、保留原目录</button>
+              <button>只搬大目录</button>
+            </div>
+          </div>
+
+          <div class="opts" style="margin-top:13px">
+            <label class="opt"><input type="checkbox" checked>
+              <span><span class="l">迁移前完整校验</span>
+                <span class="d">预演一遍，确认「还有 0 个文件没搬过去」才动手；不通过就原样退出</span></span></label>
+            <label class="opt"><input type="checkbox" checked>
+              <span><span class="l">保留可回滚快照</span>
+                <span class="d">原目录只改名成 <code>&lt;名称&gt;.moved-&lt;时间&gt;</code>，不删除，随时能回滚</span></span></label>
+            <label class="opt"><input type="checkbox">
+              <span><span class="l">完成后自动清理快照</span>
+                <span class="d">迁移成功并确认应用可用后，自动回收原目录占的空间</span></span></label>
+          </div>
+        </div>
+      </div>
+
+      <!-- ③ 执行 -->
+      <div class="card">
+        <h2>执行</h2>
+        <div class="inner">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn">重新扫描</button>
+            <button class="btn pri">开始迁移</button>
+            <button class="btn" disabled>回滚到迁移前</button>
+            <button class="btn">清理快照</button>
+          </div>
+          <div style="margin-top:13px">
+            <div class="bar-prog"><i></i></div>
+            <div class="steps">
+              <span class="step done">① 扫描</span>
+              <span class="step done">② 复制 17.3 GB</span>
+              <span class="step done">③ 校验 0 差异</span>
+              <span class="step now">④ 建联接</span>
+              <span class="step">⑤ 完成</span>
+            </div>
+            <pre class="log">[1/5] 扫描  C:\Users\29436\.workbuddy
+      220,904 个文件 · 17.31 GB · 顶层 104 项
+      跳过 2 个目录联接（binaries\python、binaries\PortableGit）
+[2/5] 复制 → F:\.WBcache\.workbuddy
+      robocopy /E /COPY:DAT /DCOPY:DAT /R:0 /W:0 /XJ
+      已复制 220,904 个文件（0 个失败）
+[3/5] 校验「还有多少文件没搬过去」
+      ✅ 0 个 —— 目标盘已完整
+[4/5] 建立目录联接
+      C:\Users\29436\.workbuddy  →  F:\.WBcache\.workbuddy
+[5/5] 完成。重启应用后生效。</pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- ④ 快照 -->
+      <div class="card">
+        <h2>快照 <span class="sub">原目录改名保留的那份，确认没问题再清</span></h2>
+        <div class="inner">
+          <table class="t">
+            <thead><tr><th>目录</th><th>大小</th><th>时间</th><th style="text-align:right">操作</th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="mono">.workbuddy.moved-20261008-194555 <span class="badge b-gray">已清理</span></td>
+                <td class="mono">17.09 GB</td><td class="mono">10-08 19:45</td>
+                <td style="text-align:right" class="mono" style="color:var(--faint)">—</td>
+              </tr>
+              <tr>
+                <td class="mono">.workbuddy-ai.moved-20261001-165033 <span class="badge b-gray">已清理</span></td>
+                <td class="mono">3.42 GB</td><td class="mono">10-01 16:50</td>
+                <td style="text-align:right" class="mono" style="color:var(--faint)">—</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="note ok" style="margin-top:11px">
+            <b>当前没有待清理的快照。</b>命名规则是 <code>&lt;名称&gt;.moved-&lt;时间&gt;</code>，
+            只出现在数据目录的<b>同级</b>（家目录 / %APPDATA%），不会碰别的东西。
+          </div>
+          <div class="note info" style="margin-top:9px">
+            删除快照后<b>这次迁移就不能回滚了</b>。「移到回收站」很快但空间要清空回收站才释放；
+            「彻底删除」空间立刻释放、不可还原。
+          </div>
+        </div>
+      </div>
+
+      <!-- ⑤ 扩展说明 -->
+      <div class="card">
+        <h2>新增一个 Agent <span class="sub">改一行配置即可，不用改代码</span></h2>
+        <div class="inner">
+          <pre class="log" style="max-height:none">[[agent]]                      # agents.toml —— 内置一份，也可放在用户目录覆盖
+id      = "codex"
+name    = "Codex CLI"
+kind    = "cli"                # cli | electron | custom
+paths   = ["~/.codex"]         # 支持 ~ / %APPDATA% / %LOCALAPPDATA% 变量
+process = ["codex*"]           # 迁移前要退出的进程（可留空）
+skip    = ["**/node_modules"]  # 可选：这些不加校验、直接跳过
+detect  = """
+  存在 ~/.codex 目录，或 %LOCALAPPDATA%/@openai-codex-updater 存在
+"""</pre>
+          <div class="note ok" style="margin-top:10px">
+            检测/迁移/回滚逻辑与具体 Agent <b>完全解耦</b>：核心只认「一个或多个数据目录 + 一条进程规则」，
+            加新 Agent 只加配置。WorkBuddy 的实现来自已跑通的 <code>wb-switch</code> 迁移模块。
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="foot">
+      <span>MIT License</span><span>·</span>
+      <span>当前平台：Windows 11（mac / Linux 后续）</span>
+      <span class="sp"></span>
+      <span class="mono" style="font-family:var(--mono)">C: 54.5 GB 可用 · D: 61.4 GB · E: 288.4 GB · F: 277.9 GB</span>
+    </div>
+  </section>
+</div>
+
+<script>
+const AGENTS = [
+  {id:'workbuddy-cn',  name:'WorkBuddy 国内版', hint:'腾讯 WorkBuddy · .workbuddy',      icon:'W',  color:'#0f766e', st:'moved', size:'17.3 GB'},
+  {id:'workbuddy-intl',name:'WorkBuddy 国际版', hint:'WorkBuddy AI · .workbuddy-ai',     icon:'W',  color:'#0369a1', st:'moved', size:'≥5.5 GB'},
+  {id:'codex',         name:'Codex CLI',        hint:'OpenAI · ~/.codex',                icon:'C',  color:'#111827', st:'free',  size:'1.10 GB'},
+  {id:'claude',        name:'Claude Code',      hint:'Anthropic · ~/.claude',            icon:'A',  color:'#b45309', st:'free',  size:'0.00 GB'},
+  {id:'cursor',        name:'Cursor',           hint:'%APPDATA%\\Cursor',                icon:'▷',  color:'#4f46e5', st:'free',  size:'1.18 GB'},
+  {id:'codebuddy-cn',  name:'CodeBuddy 国内版', hint:'%APPDATA%\\CodeBuddy CN',          icon:'B',  color:'#0f766e', st:'free',  size:'0.14 GB'},
+  {id:'zcode',         name:'ZCode',            hint:'%APPDATA%\\ZCode',                 icon:'Z',  color:'#7c3aed', st:'free',  size:'0.19 GB'},
+  {id:'deepseek',      name:'DeepSeek',         hint:'%APPDATA%\\@deepseek-ai',          icon:'D',  color:'#1d4ed8', st:'free',  size:'0.01 GB'},
+  {id:'cherry',        name:'Cherry Studio',    hint:'%APPDATA%\\CherryStudio',          icon:'✿',  color:'#db2777', st:'free',  size:'0.01 GB'},
+  {id:'trae',          name:'Trae CN',          hint:'%APPDATA%\\Trae CN',               icon:'T',  color:'#ea580c', st:'free',  size:'0.24 GB'},
+  {id:'doubao',        name:'豆包',             hint:'%APPDATA%\\Doubao',                icon:'豆', color:'#2563eb', st:'free',  size:'0.00 GB'},
+  {id:'utools',        name:'uTools',           hint:'%APPDATA%\\uTools',                icon:'u',  color:'#334155', st:'run',   size:'0.18 GB'},
+];
+
+const DETAIL = {
+  'workbuddy-cn': {
+    title:'WorkBuddy 国内版', sub:'腾讯 WorkBuddy 桌面端 · 数据目录 <code>.workbuddy</code> · 已迁移',
+    rows:[
+      ['位置','<span class="mono">C:\\Users\\29436\\.workbuddy</span> <span class="badge b-ok">已迁移 · 联接</span>'],
+      ['实际指向','<span class="mono">F:\\.WBcache\\.workbuddy</span>'],
+      ['占用','17.31 GB · 220,904 个文件'],
+      ['最后改动','10-08 21:49'],
+      ['进程','<span class="badge b-warn">WorkBuddy.exe ×6 正在运行</span>'],
+    ],
+    note:{cls:'warn', html:'<b>迁移/回滚前请完全退出 WorkBuddy</b>（窗口关掉不算，托盘要退出）。它一边跑一边改缓存，会让校验永远看不到「0 差异」。'},
+    dest:'F:\\.WBcache\\.workbuddy', final:'F:\\.WBcache\\.workbuddy',
+  },
+  'workbuddy-intl': {
+    title:'WorkBuddy 国际版', sub:'WorkBuddy AI 桌面端 · 数据目录 <code>.workbuddy-ai</code> · 已迁移',
+    rows:[
+      ['位置','<span class="mono">C:\\Users\\29436\\.workbuddy-ai</span> <span class="badge b-ok">已迁移 · 联接</span>'],
+      ['实际指向','<span class="mono">F:\\.WBcache\\.workbuddy-ai\\.workbuddy-ai</span>'],
+      ['占用','≥5.46 GB · 154,502+ 个文件 <span style="color:var(--faint)">（体积扫描被限时截断）</span>'],
+      ['最后改动','10-08 21:49'],
+      ['运行时','<span class="badge b-warn">binaries 下有 2 个断链联接</span>'],
+      ['进程','<span class="badge b-gray">未运行</span>'],
+    ],
+    note:{cls:'warn', html:'检测到 <code>binaries\\{python,PortableGit}</code> 下有<b>指向已消失路径的联接</b>；这会让应用每次启动都重新解压运行时而失败。<button class="btn sm" style="margin-left:6px">摘除断链</button>'},
+    dest:'F:\\.WBcache\\.workbuddy-ai\\.workbuddy-ai', final:'F:\\.WBcache\\.workbuddy-ai\\.workbuddy-ai',
+  },
+  'codex': {
+    title:'Codex CLI', sub:'OpenAI Codex 命令行 · 数据目录 <code>~/.codex</code> · 未迁移',
+    rows:[
+      ['位置','<span class="mono">C:\\Users\\29436\\.codex</span> <span class="badge b-gray">未迁移</span>'],
+      ['占用','1.10 GB · 9,537 个文件'],
+      ['检测依据','存在 <code>~/.codex</code>'],
+      ['进程','<span class="badge b-gray">未运行</span>'],
+    ],
+    note:{cls:'info', html:'CLI 类 Agent 通常没有常驻进程，迁移相对安全；但如果有正在跑的会话，仍建议先结束。'},
+    dest:'F:\\.AgentCache\\codex', final:'F:\\.AgentCache\\codex',
+  },
+};
+
+function renderNav(){
+  const nav=document.getElementById('nav');
+  const moved=AGENTS.filter(a=>a.st==='moved').length;
+  nav.innerHTML='';
+  for(const a of AGENTS){
+    const b=document.createElement('button');
+    b.className='item'+(a.id===cur?' on':'');
+    b.innerHTML=`<span class="ic" style="background:${a.color}">${a.icon}</span>
+                 <span class="nm">${a.name}</span>
+                 <span class="mono" style="font-size:10.5px;color:var(--faint)">${a.size||''}</span>
+                 <span class="dot ${a.st}"></span>`;
+    b.onclick=()=>{cur=a.id;render();};
+    nav.appendChild(b);
+  }
+}
+
+function renderDrives(sel){
+  const el=document.getElementById('drives');
+  const drives=[
+    {l:'C:',tag:'Acer · 系统盘',total:378.0,free:54.5},
+    {l:'D:',tag:'Softwore',    total:97.7, free:61.4},
+    {l:'E:',tag:'本地磁盘',     total:465.8,free:288.4},
+    {l:'F:',tag:'Game · 推荐',  total:931.5,free:277.9},
+  ];
+  const chosen = sel.startsWith('F:')?'F:':(sel.startsWith('E:')?'E:':(sel.startsWith('D:')?'D:':'C:'));
+  el.innerHTML = drives.map(d=>{
+    const pct = Math.round((d.total-d.free)/d.total*100);
+    return `
+    <button class="drv${d.l===chosen?' on':''}">
+      <span class="t"><span>${d.l} <span style="font-weight:400;color:var(--muted);font-size:11.5px">${d.tag}</span></span>
+        ${d.l===chosen?'<span class="badge b-info">已选</span>':''}</span>
+      <span class="bar"><i style="width:${pct}%"></i></span>
+      <span class="m">可用 ${d.free} GB / 共 ${d.total} GB</span>
+    </button>`;
+  }).join('');
+}
+
+function render(){
+  const a=AGENTS.find(x=>x.id===cur)||AGENTS[0];
+  const folder=(a.hint.split('\\')[1]||a.id).replace(/[^A-Za-z0-9-]/g,'')||a.id;
+  const fallbackDest='F:\\.AgentCache\\'+folder.toLowerCase();
+  const d=DETAIL[cur]||{
+    title:a.name, sub:a.hint+' · 未迁移',
+    rows:[
+      ['位置','<span class="mono">'+(a.hint.includes('\\')?'%APPDATA%\\'+a.hint.split('\\')[1]:'~/'+a.id)+'</span> <span class="badge b-gray">未迁移</span>'],
+      ['占用',(a.size||'待扫描')+' · 真实目录'],
+      ['进程','<span class="badge '+(a.st==='run'?'b-warn':'b-gray')+'">'+(a.st==='run'?'检测到进程在运行':'未运行')+'</span>'],
+    ],
+    note:{cls:'info',html:'点击「重新扫描」刷新体积与文件数，选好目标盘后即可迁移。'},
+    dest:fallbackDest, final:fallbackDest};
+
+  document.getElementById('title').textContent=d.title;
+  document.getElementById('subtitle').innerHTML=d.sub;
+  document.getElementById('statusRows').innerHTML=d.rows.map(([k,v])=>
+    `<div class="row"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  document.getElementById('statusNote').innerHTML=
+    `<div class="note ${d.note.cls}" style="margin-top:11px">${d.note.html}</div>`;
+  document.getElementById('destPath').value=d.dest;
+  document.getElementById('finalPath').textContent=d.final;
+  renderDrives(d.dest);
+  renderNav();
+}
+
+let cur='workbuddy-cn';
+render();
+
+document.getElementById('destPath').addEventListener('input',e=>{
+  document.getElementById('finalPath').textContent=e.target.value;
+});
+</script>
+</body>
+</html>

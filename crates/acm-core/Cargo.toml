@@ -1,0 +1,21 @@
+[package]
+name = "acm-core"
+description = "AgentCache 内核：Agent 注册表 / 检测 / 迁移（零 GUI、可单测）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+chrono.workspace = true
+
+# 精确占用检测（Restart Manager）+ 盘符/剩余空间。只在 Windows 上需要，别的平台走空实现。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_System_RestartManager",
+    "Win32_Storage_FileSystem",
+] }

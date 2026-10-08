@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = ["crates/acm-core", "crates/acm-cli", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/cv-superding/agent-cache-migrator"
+authors = ["Ding Li <cv-superding>"]
+
+[workspace.dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+toml = "0.8.2"
+chrono = "0.4.45"
+
+# 发布配置：体积优先（这是个随包分发的小工具）
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

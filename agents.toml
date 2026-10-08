@@ -1,0 +1,197 @@
+# ============================================================================
+#  AgentCache · Agent 注册表
+# ============================================================================
+#  加一个新 Agent = 在这里加一段 [[agent]]，不用改代码。
+#
+#  这份是「内置表」；用户目录下的同名文件（Windows: %APPDATA%\AgentCache\agents.toml）
+#  可以覆盖同 id 的条目、或追加新的 id。
+#
+#  字段说明
+#  ─────────────────────────────────────────────────────────────────────────
+#  id           唯一标识，同时用作默认目标子目录名。只允许 [a-z0-9-]
+#  name         界面上显示的名字
+#  vendor       厂商（可选，界面上分组用）
+#  kind         electron | cli | generic
+#  class        迁移建议等级（决定界面上的颜色与文案）
+#               safe     → 缓存类，放心迁
+#               normal   → 应用数据，退出该应用后可迁
+#               special  → 含虚拟磁盘/数据库等，提示走官方迁移流程
+#               system   → 系统保护，禁止迁移
+#  paths        数据目录模板（可多个）。支持 ~ / %APPDATA% / %LOCALAPPDATA% / %USERPROFILE%
+#  updater      Electron 更新器目录前缀（在 %LOCALAPPDATA% 下）。**仅用于检测**：
+#               装过就有、数据目录可能还没生成，所以比 paths 更早能判出「装了没」
+#               ⚠️ appId ≠ 数据目录名，两边要分别写对
+#  env_relocate 该应用**官方支持的**数据目录重定位开关（有就用它，比建联接更干净）
+#               { env = "VAR_NAME", note = "…" }
+#               设了它之后可以选择「改环境变量」而不是「搬目录建联接」
+#  processes    迁移前要退出的进程名（不区分大小写，支持 * 通配）。留空 = 不检查
+#               注：占用检测优先用 Windows Restart Manager API（精确到「谁锁着这个文件夹」），
+#               processes 只在拿不到锁信息时兜底
+#  skip         校验时跳过的 glob（这些不加「必须逐字节一致」的约束，比如日志/缓存）
+#  runtime_links 预期是「目录或联接」的路径。若是**断链的联接**会告警
+#               （重装后指向消失的常见坑，会让应用每次启动都重做准备工作）
+#  note         界面上给用户的提示（可选）
+# ============================================================================
+
+schema_version = 1
+
+
+# ─────────────────────────────── WorkBuddy ───────────────────────────────
+
+[[agent]]
+id       = "workbuddy-cn"
+name     = "WorkBuddy 国内版"
+vendor   = "腾讯"
+kind     = "electron"
+class    = "normal"
+paths    = ["~/.workbuddy"]
+updater  = ["@genieworkbuddy-desktop-updater"]
+processes = ["WorkBuddy.exe"]
+skip     = ["logs/**", "**/*.log", "app/CodeCache/**", "app/session/**"]
+runtime_links = ["binaries/python/versions/*", "binaries/PortableGit/versions/*"]
+note     = "更新缓存按用户放、不分产品，国内版和国际版共用。迁移前请连托盘一起退出。"
+# ⚠️ 故意**不**提供 env_relocate：它读 WORKBUDDY_CONFIG_DIR，但两个版本会指向同一目录、
+#    数据互踩（实测过）。对这种「同一程序有多个版本」的情况，联接才是对的解法。
+
+[[agent]]
+id       = "workbuddy-intl"
+name     = "WorkBuddy 国际版"
+vendor   = "腾讯"
+kind     = "electron"
+class    = "normal"
+paths    = ["~/.workbuddy-ai"]
+updater  = ["@genieworkbuddy-desktop-updater"]   # 与国内版共用同一个更新器目录
+processes = ["WorkBuddyAI.exe"]
+skip     = ["logs/**", "**/*.log", "app/CodeCache/**", "app/session/**"]
+runtime_links = ["binaries/python/versions/*", "binaries/PortableGit/versions/*"]
+note     = "与国内版共用更新缓存目录，任一版本下载的包可能被另一版本套用。"
+
+
+# ───────────────────────────── CLI / 编程 Agent ─────────────────────────────
+
+[[agent]]
+id       = "codex"
+name     = "Codex CLI"
+vendor   = "OpenAI"
+kind     = "cli"
+class    = "normal"
+paths    = ["~/.codex"]
+env_relocate = { env = "CODEX_HOME", note = "Codex 自己认这个变量，设了就不必建联接" }
+processes = ["codex*"]
+note     = "CLI 无常驻进程，但正在跑的会话会持续写。想用官方开关就别勾「搬目录」。"
+
+[[agent]]
+id       = "claude"
+name     = "Claude Code"
+vendor   = "Anthropic"
+kind     = "cli"
+class    = "normal"
+paths    = ["~/.claude"]
+env_relocate = { env = "CLAUDE_CONFIG_DIR", note = "Claude Code 官方支持；也支持 XDG_CONFIG_HOME" }
+processes = ["claude*"]
+
+[[agent]]
+id       = "cursor"
+name     = "Cursor"
+vendor   = "Anysphere"
+kind     = "electron"
+class    = "normal"
+paths    = ["%APPDATA%/Cursor"]
+processes = ["Cursor.exe"]
+skip     = ["logs/**", "CachedData/**", "Code Cache/**", "GPUCache/**", "Crashpad/**"]
+
+
+# ───────────────────────────── 其他国内 Agent ─────────────────────────────
+
+[[agent]]
+id       = "codebuddy-cn"
+name     = "CodeBuddy 国内版"
+vendor   = "腾讯"
+kind     = "electron"
+class    = "normal"
+paths    = ["%APPDATA%/CodeBuddy CN"]
+processes = ["CodeBuddy.exe"]
+
+[[agent]]
+id       = "trae"
+name     = "Trae CN"
+vendor   = "字节跳动"
+kind     = "electron"
+class    = "normal"
+paths    = ["%APPDATA%/Trae CN"]
+processes = ["Trae.exe"]
+
+[[agent]]
+id       = "zcode"
+name     = "ZCode"
+kind     = "electron"
+class    = "normal"
+paths    = ["%APPDATA%/ZCode"]
+updater  = ["@zcodedesktop-updater"]   # 注意：appId 是 zcodedesktop，数据目录却是 ZCode
+processes = ["ZCode.exe"]
+
+[[agent]]
+id       = "deepseek"
+name     = "DeepSeek"
+kind     = "electron"
+class    = "normal"
+paths    = ["%APPDATA%/@deepseek-ai"]   # 注意：带 @ 前缀
+updater  = ["@deepseek-aidsh-desktop-updater"]
+processes = ["DeepSeek*.exe"]
+
+[[agent]]
+id       = "doubao"
+name     = "豆包"
+vendor   = "字节跳动"
+kind     = "electron"
+class    = "normal"
+paths    = ["%APPDATA%/Doubao"]
+processes = ["Doubao.exe"]
+
+
+# ───────────────────────────── 通用工具 ─────────────────────────────
+
+[[agent]]
+id       = "cherry"
+name     = "Cherry Studio"
+kind     = "electron"
+class    = "normal"
+paths    = ["%APPDATA%/CherryStudio"]
+updater  = ["cherrystudio-updater"]
+processes = ["CherryStudio.exe"]
+
+[[agent]]
+id       = "utools"
+name     = "uTools"
+kind     = "electron"
+class    = "normal"
+paths    = ["%APPDATA%/uTools"]
+updater  = ["utools-updater"]
+processes = ["uTools.exe"]
+
+
+# ───────────────────────────── 缓存类（class="safe"）示例 ─────────────────────────────
+#  这类目录搬走没有风险（丢了也只是重新下载），适合放最前面给用户先练手。
+
+[[agent]]
+id       = "npm-cache"
+name     = "npm 缓存"
+kind     = "generic"
+class    = "safe"
+paths    = ["%LOCALAPPDATA%/npm-cache", "~/.npm/_cacache"]
+processes = []
+note     = "纯缓存。搬走后 npm 会按需重新拉取。"
+
+
+# ============================================================================
+#  追加示例（复制下面这段改一改就是一个新 Agent）
+# ============================================================================
+# [[agent]]
+# id        = "windsurf"
+# name      = "Windsurf"
+# kind      = "electron"
+# class     = "normal"
+# paths     = ["%APPDATA%/Windsurf"]
+# updater   = ["windsurf-updater"]
+# processes = ["Windsurf.exe"]
+# skip      = ["logs/**", "Cache/**"]
