@@ -126,7 +126,28 @@ jobs:
       - run: npm ci
 
       - name: 构建
-        run: npm run tauri build ${{ matrix.args }}
+        # 🔴 必须显式用 bash：Windows runner 默认是 PowerShell，
+        # 而下面这段用的是 bash 语法（`set -o pipefail` / `${var//x/y}`）。
+        shell: bash
+        run: |
+          # 同 ci.yml：失败原因要靠 annotation 传出来（job 日志下载实测 401）
+          set -o pipefail
+          if npm run tauri build ${{ matrix.args }} 2>&1 | tee /tmp/build.log; then
+            echo "✓ 构建完成，产物清单："
+            find src-tauri/target -path '*bundle*' -type f -printf '%10s  %p\n' | sort -k2 | head -30
+            echo "（若上面为空，说明 bundle 没产出 —— 后面 upload 会失败）"
+          else
+            {
+              grep -nE "error(\[|:| )|Error:|failed|FAILED|panicked|not found" /tmp/build.log | head -15
+              echo "=== 日志末尾 ==="
+              tail -30 /tmp/build.log
+            } | while IFS= read -r line || [ -n "$line" ]; do
+              line="${line//$'\r'/}"
+              line="${line//%/%25}"
+              if [ -n "$line" ]; then echo "::error::$line"; fi
+            done
+            exit 1
+          fi
 
       # `--target` 构建时产物在 `target/<triple>/release/bundle/`，
       # 不带 `--target` 时在 `target/release/bundle/` —— 两套都要收。
