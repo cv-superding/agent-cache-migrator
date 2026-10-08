@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/cv-superding/agent-cache-migrator?label=release)](https://github.com/cv-superding/agent-cache-migrator/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D4)
-![Rust](https://img.shields.io/badge/Rust-1.82%2B-000000?logo=rust)
+![Rust](https://img.shields.io/badge/Rust-1.85%2B-000000?logo=rust)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri)
 
 把各种 AI Agent（WorkBuddy / Codex / Claude Code / Cursor / CodeBuddy / ZCode / DeepSeek / Trae …）

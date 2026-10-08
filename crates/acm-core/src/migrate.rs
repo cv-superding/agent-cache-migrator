@@ -1002,7 +1002,14 @@ mod imp {
             std::fs::write(src.join("c.txt"), b"new").unwrap();
             assert_eq!(pending_count(&src, &dst).unwrap(), 1);
 
-            // ④ 快照 + 链接 + 穿过链接验证
+            // ④ 再复制一次（增量）→ 应当收敛，且新文件确实到了目标
+            //    （这条是补上的：早先只在 ③ 之后直接断言目标条目数，
+            //     忘了 c.txt 还没被复制 —— 测试自己把这一步暴露了出来）
+            copy_tree(&src, &dst).unwrap();
+            assert_eq!(pending_count(&src, &dst).unwrap(), 0, "增量复制后应当收敛");
+            assert!(dst.join("c.txt").exists(), "增量复制要把新文件带过去");
+
+            // ⑤ 快照 + 链接 + 穿过链接验证
             let snap = rename_to_snapshot(&src).unwrap();
             assert!(snap
                 .file_name()
@@ -1010,10 +1017,11 @@ mod imp {
                 .to_string_lossy()
                 .contains(".moved-"));
             make_junction(&src, &dst).unwrap();
+            // dst 里现在应当是 a.txt / c.txt / sub 三个条目
             assert!(verify_through_link(&src, &dst).unwrap() >= 3);
             assert!(src.join("a.txt").exists(), "穿过链接读原路径也要拿到文件");
 
-            // ⑤ 摘链接 + 回滚
+            // ⑥ 摘链接 + 回滚
             remove_junction(&src).unwrap();
             rename_back(&snap, &src).unwrap();
             assert!(src.is_dir() && !src.is_symlink(), "回滚后应恢复成真实目录");
