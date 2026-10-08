@@ -160,18 +160,17 @@ jobs:
             find target -path '*bundle*' -type f -printf '%10s  %p\n' | sort -k2 | head -30
             echo "（若上面为空，说明 bundle 没产出 —— 后面 upload 会失败）"
           else
+            echo "::error::构建失败，下面是完整日志（base64，解码可读）"
+            # annotation 有行数/长度配额，逐行发会被截到只剩一两行 —— 实测就吃过这个亏
+            # （只拿到一句 exit code，完全看不出原因）。
+            # 这里把整个日志 base64 成**一条** annotation，一次带全。
+            # 解码： base64 -d <<< '<粘贴>' | head -100
             {
-              # ⚠️ 每个可能"无输出"的命令都要 `|| true`：bash 带了 `-e`，
-              # 而上面又开了 `pipefail` —— grep 没匹配到就会返回 1，
-              # 整个脚本会**提前退出**，结果一条诊断都发不出来。踩过。
-              grep -nE "error(\[|:| )|Error:|failed|FAILED|panicked|not found|unexpected argument" /tmp/build.log | head -20 || true
-              echo "=== 日志末尾 40 行 ==="
-              tail -40 /tmp/build.log || true
-            } | while IFS= read -r line || [ -n "$line" ]; do
-              line="${line//$'\r'/}"
-              line="${line//%/%25}"
-              if [ -n "$line" ]; then echo "::error::$line"; fi
-            done
+              echo "=== 日志大小 $(wc -c < /tmp/build.log 2>/dev/null || echo 0) 字节 ==="
+            } | while IFS= read -r line; do echo "::error::$line"; done || true
+            base64 /tmp/build.log 2>/dev/null | tr -d '\n' | head -c 55000 | while IFS= read -r b64; do
+              echo "::error::LOG_BASE64::$b64"
+            done || true
             exit 1
           fi
 
