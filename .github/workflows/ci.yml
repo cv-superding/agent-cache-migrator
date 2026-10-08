@@ -25,11 +25,14 @@ jobs:
     name: 内核与 CLI（Linux）
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           target: x86_64-unknown-linux-gnu
+          # ⚠️ 显式写出来，不依赖 action 的默认值 ——
+          # 这个默认值一旦被上游改掉，我们就悄悄失去「警告即失败」的保护。
+          rustflags: "-D warnings"
 
       - name: 版本/格式自检
         run: cargo fmt --all --check
@@ -42,9 +45,9 @@ jobs:
     name: 前端（类型 + 构建）
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm

@@ -6,6 +6,12 @@
 //! **Restart Manager API** —— 它直接告诉你「谁锁着这个文件夹」，
 //! 而不是靠名字猜。那部分在 `locks.rs` 里实现，这里负责名字匹配与展示。
 
+/// 🔴 `Command` 只被 Windows 版的 [`list_names`]（跑 `tasklist`）用到。
+///
+/// 不按平台收这个 import 的话，在 mac/linux 上它就是「未使用的导入」——
+/// 而这在本仓库会**直接挂 CI**（`-D warnings`），且只在非 Windows 上暴露。
+/// 踩过一次，别再删这个 `#[cfg]`。
+#[cfg(windows)]
 use std::process::Command;
 
 /// 列当前进程名（带扩展名）。
