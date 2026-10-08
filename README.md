@@ -1,18 +1,35 @@
 # AgentCache —— 通用 AI Agent 缓存迁移器
 
 [![CI](https://github.com/cv-superding/agent-cache-migrator/actions/workflows/ci.yml/badge.svg)](https://github.com/cv-superding/agent-cache-migrator/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/cv-superding/agent-cache-migrator?label=release)](https://github.com/cv-superding/agent-cache-migrator/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D4)
 ![Rust](https://img.shields.io/badge/Rust-1.82%2B-000000?logo=rust)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri)
 
 把各种 AI Agent（WorkBuddy / Codex / Claude Code / Cursor / CodeBuddy / ZCode / DeepSeek / Trae …）
 的数据目录**迁到别的盘**，腾出系统盘空间。
 
-做法是 NTFS **目录联接（junction）**：原路径原地不动、对应用完全透明，实际文件落到目标盘。
+做法是在原路径留一个**重定向点**：原路径原地不动、对应用完全透明，实际文件落到目标盘。
 迁移前完整校验、原目录只改名不删除（可回滚），随时能退回去。
 
-> Windows 11 优先，macOS / Linux 随后（同一套内核，替换联接实现）。
+> **Windows / macOS / Linux 都支持**，同一套内核，各平台用各自的机制（见 [各平台用的机制](#各平台用的机制)）。
+
+---
+
+## 下载
+
+到 [**Releases**](https://github.com/cv-superding/agent-cache-migrator/releases) 取对应平台的包：
+
+| 平台 | 产物 |
+|---|---|
+| Windows 10 / 11 | NSIS 安装包（`.exe`）· MSI（`.msi`） |
+| macOS | `.dmg` —— **通用包**，一个文件同时支持 Apple Silicon 与 Intel |
+| Linux | `.AppImage` · `.deb` · `.rpm` |
+
+> 打 tag（`v*`）会自动触发三平台构建并发布。构建前先跑一遍完整检查 ——
+> 其中包含 **unix 迁移的端到端测试**（复制 → 校验 → 建符号链接 → 回滚），
+> 所以 mac/linux 这条路是**被真实跑过**的，不是纸面实现。
 
 ---
 
@@ -69,8 +86,26 @@ skip      = ["**/node_modules"]       # 可选：这些不进校验
 
 | 策略 | 适用 | 说明 |
 |---|---|---|
-| **搬目录 + 建联接**（默认） | 所有应用 | 原路径留一个 NTFS 重解析点，对应用完全透明，**不需要管理员权限** |
-| **改环境变量**（可选） | 应用**官方支持**时 | 更干净、不留重解析点；前提是该应用自己认这个变量 |
+| **搬目录 + 建重定向点**（默认） | 所有应用 | 原路径留一个重定向点，对应用透明，**不需要管理员权限** |
+| **改环境变量**（可选） | 应用**官方支持**时 | 更干净、不留重定向点；前提是该应用自己认这个变量 |
+
+### 各平台用的机制
+
+| 平台 | 重定向方式 | 复制方式 |
+|---|---|---|
+| **Windows** | **NTFS 目录联接**（`mklink /J`） | `robocopy /E /COPY:DAT /DCOPY:DAT /R:0 /W:0 /XJ` |
+| **macOS / Linux** | **符号链接** | 内置递归复制（**不用 rsync** —— 各平台参数/是否预装都不一致） |
+
+两平台上**语义完全对齐**的两点（改动时别破坏）：
+
+- 🔴 **都不跟随**源目录里已有的符号链接/重解析点（对应 Windows 的 `/XJ`）——
+  否则会把链接指向的整棵树也复制一遍，可能是几十 GB 且在另一块盘上。
+- 🔴 **摘除时都只摘链接本身**，绝不递归进目标删真实数据。
+
+> ⚠️ 一个**必须说清的差别**：Windows 的目录联接是文件系统层的「目录别名」，对应用
+> **完全透明**；而 unix 的符号链接是一个真实存在的链接文件，绝大多数程序会正常跟随，
+> 但少数会 `O_NOFOLLOW` 或 `lstat` 检测到它。这是 unix 上的通行做法，
+> 但比 Windows 那份多一个前提条件。
 
 `env_relocate` 用来标记后者。已在**应用自己的文件里**核实过的：
 

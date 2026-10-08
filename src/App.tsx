@@ -536,7 +536,6 @@ function DestCard(props: {
   onOpen: (p: string) => void;
 }) {
   const { drives, destRoot, onDestRoot, plan, planErr, planning, onOpen } = props;
-  const cur = destRoot ? destRoot.slice(0, 2).toUpperCase() : "";
 
   return (
     <Card title="迁移到" sub="左边选盘，右边确认路径">
@@ -552,7 +551,7 @@ function DestCard(props: {
               <DriveBtn
                 key={d.letter}
                 d={d}
-                on={d.letter.slice(0, 2).toUpperCase() === cur}
+                on={isSelected(d, destRoot)}
                 onPick={() => onDestRoot(deriveRootOf(d, destRoot))}
               />
             ))}
@@ -642,10 +641,26 @@ function DestCard(props: {
   );
 }
 
+/** 判断某个位置是不是当前选中的目标。
+ *
+ * Windows 比盘符（`E://`）；unix 比挂载点 —— 而且要用**前缀**比，
+ * 因为 `/mnt/data` 和 `/` 会同时存在。
+ */
+function isSelected(d: DriveInfo, destRoot: string): boolean {
+  if (!destRoot) return false;
+  if (d.letter.includes("\\")) {
+    return destRoot.slice(0, 2).toUpperCase() === d.letter.slice(0, 2).toUpperCase();
+  }
+  const m = d.letter.replace(/[\\/]+$/, "");
+  return destRoot === m || destRoot.startsWith(m + "/");
+}
+
 function deriveRootOf(d: DriveInfo, cur: string): string {
-  // 换盘时把原来的子路径（`\AgentCache`）带过去，省得用户重打
-  const sub = cur.replace(/^[A-Za-z]:/, "");
-  return `${d.letter.slice(0, 2)}${sub || "\\AgentCache"}`;
+  // 换位置时把原来的最后一段（一般就是 `AgentCache`）带过去，省得用户重打。
+  // 分隔符按目标位置自己判断 —— Windows 是 `E:\`，unix 是 `/mnt/data`。
+  const leaf = cur.split(/[\\/]/).filter(Boolean).pop() ?? "AgentCache";
+  const sep = d.letter.includes("\\") ? "\\" : "/";
+  return d.letter.replace(/[\\/]+$/, "") + sep + leaf;
 }
 
 function DriveBtn({ d, on, onPick }: { d: DriveInfo; on: boolean; onPick: () => void }) {

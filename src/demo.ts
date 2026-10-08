@@ -411,7 +411,7 @@ export const SNAPSHOTS: Snapshot[] = [
 /** 演示用的迁移进度序列。 */
 export const PROGRESS_SEQ: Progress[] = [
   { step: "copying", detail: "正在复制到 E:\\AgentCache\\codex", percent: 5 },
-  { step: "copying", detail: "robocopy 完成（只补不删）", percent: 68 },
+  { step: "copying", detail: "复制完成（只补不删）", percent: 68 },
   { step: "verifying", detail: "正在核对差异", percent: 72 },
   { step: "verifying", detail: "源里已无待复制文件（0 差异）", percent: 78 },
   { step: "snapshotting", detail: "原目录改名保留为 .codex.moved-20261008-223000", percent: 84 },
@@ -426,7 +426,7 @@ export const REPORT: MigrateReport = {
   dest: "E:\\AgentCache\\codex",
   snapshot: "C:\\Users\\29436\\.codex.moved-20261008-223000",
   steps: [
-    { name: "复制", ok: true, detail: "robocopy 完成（只补不删）" },
+    { name: "复制", ok: true, detail: "复制完成（只补不删）" },
     { name: "校验", ok: true, detail: "源里已无待复制文件（0 差异）" },
     { name: "快照", ok: true, detail: "原目录改名保留" },
     { name: "建联接", ok: true, detail: "C:\\Users\\29436\\.codex → E:\\AgentCache\\codex" },

@@ -1,0 +1,158 @@
+name: Release
+
+# 打 tag 就发版：先过一遍检查，再在三个平台上构建，最后汇总发布。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ---------------------------------------------------------------- 发布前检查
+  #
+  # 和 CI 跑同一套检查。**发布不该绕开测试** —— 而且这里的 `core` 测试里
+  # 包含 unix 迁移的端到端用例（复制 → 校验 → 建符号链接 → 回滚），
+  # 它跑在 Linux 上，等于是给 mac/linux 这条路做了一次真实背书。
+  verify:
+    name: 发布前检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: x86_64-unknown-linux-gnu
+          rustflags: "-D warnings"
+
+      - name: 格式
+        run: cargo fmt --all --check
+
+      # 版本号散在几个地方：Cargo.toml（真源）/ package.json / tauri.conf.json。
+      # 漏改任何一处，产出的安装包名字就会和 tag 对不上 —— 而且**不会报错**，
+      # 只有用户下载时才发现。所以在这里显式拦住。
+      - name: tag 与各处的版本号必须一致
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          CARGO=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          PKG=$(python3 -c "import json;print(json.load(open('package.json'))['version'])")
+          TAURI=$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          echo "tag=$TAG  Cargo.toml=$CARGO  package.json=$PKG  tauri.conf.json=$TAURI"
+          if [ "$TAG" != "$CARGO" ] || [ "$TAG" != "$PKG" ] || [ "$TAG" != "$TAURI" ]; then
+            echo "::error::版本号不一致 —— 打 tag 前请把上面四处改成同一个值"
+            exit 1
+          fi
+
+      - name: 内核单测（含 unix 端到端迁移）
+        run: cargo test -p acm-core -p acm-cli --all-targets
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run build
+
+  # ---------------------------------------------------------------- 三平台构建
+  build:
+    name: ${{ matrix.name }}
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS 构建 universal 包：一个 dmg 同时支持 Apple Silicon 与 Intel，
+          # 省得用户对着两个包猜自己该下哪个。
+          - os: macos-latest
+            name: macOS（通用）
+            target: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin
+          - os: ubuntu-22.04
+            name: Linux（x64）
+            target: x86_64-unknown-linux-gnu
+            args: ""
+          - os: windows-latest
+            name: Windows（x64）
+            target: x86_64-pc-windows-msvc
+            args: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      # ⚠️ 这里**刻意不用** `setup-rust-toolchain` —— 它默认带 `-D warnings`，
+      # 而发布构建不该因为某个第三方依赖的警告就挂掉。
+      # 严格检查已经在 verify job 里做过了，这里是"只要能出货"。
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Tauri 在 Linux 上要这些；rpm 是为了让 `bundle.targets = "all"` 里的
+      # rpm 目标也能构建成功（否则会整个构建失败）。
+      - name: 装 Linux 系统依赖
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm
+
+      - run: npm ci
+
+      - name: 构建
+        run: npm run tauri build ${{ matrix.args }}
+
+      # `--target` 构建时产物在 `target/<triple>/release/bundle/`，
+      # 不带 `--target` 时在 `target/release/bundle/` —— 两套都要收。
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bundle-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
+            src-tauri/target/*/release/bundle/**/*.exe
+            src-tauri/target/*/release/bundle/**/*.msi
+            src-tauri/target/*/release/bundle/**/*.dmg
+            src-tauri/target/*/release/bundle/**/*.AppImage
+            src-tauri/target/*/release/bundle/**/*.deb
+            src-tauri/target/*/release/bundle/**/*.rpm
+
+  # ---------------------------------------------------------------- 汇总发布
+  #
+  # 单独一个 job 来做发布（而不是让 matrix 里每个平台各自去创建 Release）：
+  # 三个 job 并发地"发现 Release 不存在 → 创建"是有竞态的，
+  # 集中一处上传就没有这个问题，也能在发之前把全部产物列出来核对。
+  release:
+    name: 发布
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: 将要发布的文件（顺便当一次"资产数量对不对"的目视检查）
+        run: find artifacts -type f -printf '%10s  %p\n' | sort -k2
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
+          draft: false

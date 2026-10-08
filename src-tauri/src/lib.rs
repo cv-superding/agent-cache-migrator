@@ -13,18 +13,21 @@ use tauri::Emitter;
 /// 进度事件名 —— 前端 `listen("migrate-progress")`。
 const PROGRESS_EVENT: &str = "migrate-progress";
 
-/// 一个盘符的信息（界面上画容量条用）。
+/// 一个可选的目标位置。
+///
+/// ⚠️ 字段名叫 `letter` 是历史原因 —— **unix 上它是挂载点**（`/home`、`/mnt/data`），
+/// 不是盘符。前端已经按「一个根路径」来用，不当作盘符字面量。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DriveInfo {
-    /// `C:\`
+    /// Windows：`C:\`；unix：挂载点。
     pub letter: String,
     pub free: u64,
     pub total: u64,
     pub free_text: String,
     pub used_percent: u8,
     pub is_system: bool,
-    /// 是不是当前自动挑中的目标根所在的盘
+    /// 是不是当前自动挑中的目标根所在的位置
     pub is_default_target: bool,
 }
 
@@ -68,7 +71,7 @@ async fn drives() -> Result<Value, String> {
         let default_root = migrate::default_dest_root();
         let default_drive = default_root
             .as_ref()
-            .map(|p| drive_letter(p))
+            .map(|p| root_of(p))
             .unwrap_or_default();
 
         let list: Vec<DriveInfo> = migrate::drives()
@@ -227,12 +230,25 @@ fn resolve(agent_id: &str) -> Result<(acm_core::AgentDef, PathBuf), String> {
     Err(format!("{} 的数据目录都不存在", def.name))
 }
 
-fn drive_letter(p: &Path) -> String {
+/// 取路径所在的「根」。
+///
+/// - **Windows**：盘符（`C:\`、`D:\`…）
+/// - **unix**：挂载点（`/`、`/home`、`/mnt/data`…）—— 取**最长**的匹配前缀，
+///   因为挂载点是可嵌套的（`/` 和 `/mnt/data` 会同时存在，后者更具体）
+fn root_of(p: &Path) -> String {
     let s = p.to_string_lossy();
-    match s.find(":\\") {
-        Some(i) => s[..i + 2].to_string(),
-        None => String::new(),
+    if let Some(i) = s.find(":\\") {
+        return s[..i + 2].to_string();
     }
+    migrate::drives()
+        .into_iter()
+        .filter(|m| {
+            let m = m.trim_end_matches('/');
+            let m = if m.is_empty() { "/" } else { m };
+            m == "/" || s == m || s.starts_with(&format!("{m}/"))
+        })
+        .max_by_key(|m| m.len())
+        .unwrap_or_else(|| "/".to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
