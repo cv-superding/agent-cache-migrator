@@ -57,7 +57,10 @@ pub enum EntryKind {
     File,
     Dir,
     /// 重解析点。`broken` = 目标已经不存在（**这是重点排查对象**）。
-    Link { target: Option<PathBuf>, broken: bool },
+    Link {
+        target: Option<PathBuf>,
+        broken: bool,
+    },
 }
 
 /// 判定一个路径，**不跟随**重解析点。
@@ -190,7 +193,10 @@ mod tests {
 
     #[test]
     fn normalize_strips_long_path_prefix() {
-        assert_eq!(normalize(PathBuf::from(r"\\?\C:\x\y")), PathBuf::from(r"C:\x\y"));
+        assert_eq!(
+            normalize(PathBuf::from(r"\\?\C:\x\y")),
+            PathBuf::from(r"C:\x\y")
+        );
         assert_eq!(normalize(PathBuf::from(r"C:\x")), PathBuf::from(r"C:\x"));
     }
 }

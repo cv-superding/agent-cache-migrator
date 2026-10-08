@@ -115,10 +115,7 @@ mod imp {
         };
 
         // 宽字符串必须活到 RmRegisterResources 调用结束 —— 所以先收集成 Vec，再取指针。
-        let wide: Vec<Vec<u16>> = paths
-            .iter()
-            .map(|p| wide(&p.to_string_lossy()))
-            .collect();
+        let wide: Vec<Vec<u16>> = paths.iter().map(|p| wide(&p.to_string_lossy())).collect();
         let ptrs: Vec<*const u16> = wide.iter().map(|w| w.as_ptr()).collect();
 
         let rc = unsafe {
@@ -218,9 +215,20 @@ mod tests {
     #[test]
     fn holder_label_is_readable() {
         assert_eq!(
-            Holder { pid: 42, app: "WorkBuddy.exe".into() }.label(),
+            Holder {
+                pid: 42,
+                app: "WorkBuddy.exe".into()
+            }
+            .label(),
             "WorkBuddy.exe (pid 42)"
         );
-        assert_eq!(Holder { pid: 7, app: String::new() }.label(), "pid 7");
+        assert_eq!(
+            Holder {
+                pid: 7,
+                app: String::new()
+            }
+            .label(),
+            "pid 7"
+        );
     }
 }

@@ -26,7 +26,11 @@ pub struct DetectOpts {
 
 impl Default for DetectOpts {
     fn default() -> Self {
-        Self { measure: true, cap_files: 250_000, cap_secs: 20 }
+        Self {
+            measure: true,
+            cap_files: 250_000,
+            cap_secs: 20,
+        }
     }
 }
 
@@ -85,8 +89,8 @@ pub fn load(user: Option<&Path>) -> Result<Vec<AgentDef>, String> {
         return Ok(out);
     };
 
-    let text = std::fs::read_to_string(&p)
-        .map_err(|e| format!("读不了 {}：{e}", p.to_string_lossy()))?;
+    let text =
+        std::fs::read_to_string(&p).map_err(|e| format!("读不了 {}：{e}", p.to_string_lossy()))?;
     for custom in parse(&text)? {
         match out.iter_mut().find(|a| a.id == custom.id) {
             Some(slot) => *slot = custom,
@@ -117,7 +121,11 @@ pub fn detect(def: &AgentDef, opts: &DetectOpts) -> DetectedAgent {
         let link_broken = matches!(kind, EntryKind::Link { broken: true, .. });
 
         let m = if opts.measure && !matches!(kind, EntryKind::Missing | EntryKind::File) {
-            fsutil::measure(&resolved, opts.cap_files, Duration::from_secs(opts.cap_secs))
+            fsutil::measure(
+                &resolved,
+                opts.cap_files,
+                Duration::from_secs(opts.cap_secs),
+            )
         } else {
             Measure::default()
         };
@@ -218,7 +226,11 @@ fn check_runtime_links(def: &AgentDef, hits: &[PathHit]) -> Vec<BrokenLink> {
 
     for tpl in &def.runtime_links {
         for p in expand_glob(&base, tpl) {
-            if let EntryKind::Link { target, broken: true } = fsutil::classify(&p) {
+            if let EntryKind::Link {
+                target,
+                broken: true,
+            } = fsutil::classify(&p)
+            {
                 out.push(BrokenLink {
                     path: p.to_string_lossy().to_string(),
                     target: target.map(|t| t.to_string_lossy().to_string()),
@@ -241,11 +253,18 @@ pub fn expand_glob(base: &Path, pattern: &str) -> Vec<PathBuf> {
         .collect();
     let star_last = segs.last().is_some_and(|s| *s == "*");
     // 中间通配不支持：明确不支持 > 悄悄给错结果
-    if segs[..segs.len().saturating_sub(1)].iter().any(|s| *s == "*") {
+    if segs[..segs.len().saturating_sub(1)]
+        .iter()
+        .any(|s| *s == "*")
+    {
         return Vec::new();
     }
 
-    let head = if star_last { &segs[..segs.len() - 1] } else { &segs[..] };
+    let head = if star_last {
+        &segs[..segs.len() - 1]
+    } else {
+        &segs[..]
+    };
     let mut cur = vec![base.to_path_buf()];
     for s in head {
         cur = cur.into_iter().map(|d| d.join(s)).collect();
@@ -256,7 +275,9 @@ pub fn expand_glob(base: &Path, pattern: &str) -> Vec<PathBuf> {
     }
     let mut next = Vec::new();
     for d in &cur {
-        let Ok(rd) = std::fs::read_dir(d) else { continue };
+        let Ok(rd) = std::fs::read_dir(d) else {
+            continue;
+        };
         for e in rd.flatten() {
             next.push(e.path());
         }
@@ -310,7 +331,10 @@ mod tests {
     fn detects_workbuddy_entries_on_this_machine_if_present() {
         // 只在真装了的情况下断言，避免把机器状态写进测试
         let defs = parse(BUILTIN_TOML).unwrap();
-        let opts = DetectOpts { measure: false, ..Default::default() };
+        let opts = DetectOpts {
+            measure: false,
+            ..Default::default()
+        };
         let all = detect_all(&defs, &opts);
         assert_eq!(all.len(), defs.len());
 

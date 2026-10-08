@@ -140,11 +140,7 @@ fn print_report(all: &[acm_core::DetectedAgent], measured: bool) {
             "未测量（--no-measure）".to_string()
         } else {
             let s = fsutil::human(a.total.bytes);
-            let t = if a.total.capped {
-                format!("≥{s}")
-            } else {
-                s
-            };
+            let t = if a.total.capped { format!("≥{s}") } else { s };
             format!("{t:>10}  {:>7} 文件", a.total.files)
         };
 
@@ -215,7 +211,9 @@ fn cmd_plan(args: &[String]) -> Result<(), String> {
 
     let mut any = false;
     for tpl in &def.paths {
-        let Some(src) = paths::expand(tpl) else { continue };
+        let Some(src) = paths::expand(tpl) else {
+            continue;
+        };
         if !src.exists() {
             println!("{tpl} → {}（不存在，跳过）\n", src.display());
             continue;
@@ -240,7 +238,11 @@ fn print_plan(p: &migrate::Plan) {
         "  占用　{}  {} 文件{}",
         fsutil::human(p.src_measure.bytes),
         p.src_measure.files,
-        if p.src_measure.capped { "（下限，已截断）" } else { "" }
+        if p.src_measure.capped {
+            "（下限，已截断）"
+        } else {
+            ""
+        }
     );
     println!("  目标　{}", p.dest);
     println!(
@@ -291,7 +293,9 @@ fn cmd_snapshots(args: &[String]) -> Result<(), String> {
 
     if snaps.is_empty() {
         println!("没有快照。");
-        println!("（快照是迁移时原目录改名保留的那份 `<名字>.moved-<时间戳>`，删掉它就不能回滚了。）");
+        println!(
+            "（快照是迁移时原目录改名保留的那份 `<名字>.moved-<时间戳>`，删掉它就不能回滚了。）"
+        );
         return Ok(());
     }
 

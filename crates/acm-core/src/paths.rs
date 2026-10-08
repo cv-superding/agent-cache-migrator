@@ -105,7 +105,7 @@ mod tests {
         assert_eq!(expand("~\\.codex"), Some(home.join(".codex")));
         // 多级
         assert_eq!(
-            expand("~/.workbuddy/bash/../x") .map(|p| p.components().count() > 0),
+            expand("~/.workbuddy/bash/../x").map(|p| p.components().count() > 0),
             Some(true),
             "展开不该崩"
         );

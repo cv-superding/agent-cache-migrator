@@ -1,5 +1,11 @@
 # AgentCache —— 通用 AI Agent 缓存迁移器
 
+[![CI](https://github.com/cv-superding/agent-cache-migrator/actions/workflows/ci.yml/badge.svg)](https://github.com/cv-superding/agent-cache-migrator/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4)
+![Rust](https://img.shields.io/badge/Rust-1.82%2B-000000?logo=rust)
+![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri)
+
 把各种 AI Agent（WorkBuddy / Codex / Claude Code / Cursor / CodeBuddy / ZCode / DeepSeek / Trae …）
 的数据目录**迁到别的盘**，腾出系统盘空间。
 

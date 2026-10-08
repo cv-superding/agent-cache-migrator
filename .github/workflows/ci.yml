@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ---------------------------------------------------------------- 内核 + CLI
+  #
+  # 🔴 刻意跑在 Linux 上，而不是 Windows。
+  # 这个项目里大量代码是 Windows 专属的（robocopy、`mklink`、Restart Manager、
+  # `GetDiskFreeSpaceExW`…）。**只在 Windows 上跑 CI 是抓不到问题的** ——
+  # 只被某个平台用到的私有 helper 在另一个平台上就是「死代码」，
+  # 而 `-D warnings` 会把它变成构建失败。mac/linux 全绿、win 挂，或反过来，
+  # 都很常见。跑 Linux 这一趟就是为了提早撞上这类问题。
+  #
+  # ⚠️ `actions-rust-lang/setup-rust-toolchain` 的 `rustflags` **默认就是
+  #    `-D warnings`**。这里不改它 —— 就是要让警告直接失败。
+  core:
+    name: 内核与 CLI（Linux）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: x86_64-unknown-linux-gnu
+
+      - name: 版本/格式自检
+        run: cargo fmt --all --check
+
+      - name: 跑单测
+        run: cargo test -p acm-core -p acm-cli --all-targets
+
+  # ---------------------------------------------------------------- 前端
+  frontend:
+    name: 前端（类型 + 构建）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: 类型检查
+        run: npx tsc --noEmit
+
+      - name: 构建
+        run: npm run build
+
+      - name: 演示模式也要能构建
+        run: VITE_DEMO_MODE=1 npx vite build
+
+# 注：`src-tauri`（桌面壳）故意没进 CI —— 它在 Linux 上要装
+# webkit2gtk / libsoup / librsvg 一堆系统包，成本高、收益低。
+# 桌面包裹到 release 时由本地或专门的打包 workflow 处理。

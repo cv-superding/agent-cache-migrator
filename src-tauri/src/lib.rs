@@ -33,7 +33,10 @@ pub struct DriveInfo {
 /// `measure = false` 时只判存在性，几乎瞬时 —— 界面首屏先用它渲染，
 /// 再后台跑一次带体积的。
 #[tauri::command]
-async fn detect(measure: bool, only: Option<String>) -> Result<Vec<acm_core::DetectedAgent>, String> {
+async fn detect(
+    measure: bool,
+    only: Option<String>,
+) -> Result<Vec<acm_core::DetectedAgent>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut defs = agents::load(None)?;
         if let Some(id) = only {
@@ -75,8 +78,9 @@ async fn drives() -> Result<Value, String> {
                 let used_percent = if total == 0 {
                     0
                 } else {
-                    (((total - free) as f64 / total as f64) * 100.0).round().clamp(0.0, 100.0)
-                        as u8
+                    (((total - free) as f64 / total as f64) * 100.0)
+                        .round()
+                        .clamp(0.0, 100.0) as u8
                 };
                 let letter_trim = d.trim_end_matches('\\').to_string();
                 DriveInfo {

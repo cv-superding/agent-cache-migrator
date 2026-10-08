@@ -270,7 +270,11 @@ pub fn run(plan: &Plan, cb: &mut dyn FnMut(Progress)) -> MigrateReport {
             detail: "robocopy 完成（只补不删）".into(),
         }),
         Err(e) => {
-            r.steps.push(StepResult { name: "复制".into(), ok: false, detail: e.clone() });
+            r.steps.push(StepResult {
+                name: "复制".into(),
+                ok: false,
+                detail: e.clone(),
+            });
             return r.fail(e);
         }
     }
@@ -292,13 +296,21 @@ pub fn run(plan: &Plan, cb: &mut dyn FnMut(Progress)) -> MigrateReport {
                 "校验没过：源里还有 {n} 个文件没搬过去。\
                  （若数字一直不降，通常是应用还在后台运行、边复制边改写）"
             );
-            r.steps.push(StepResult { name: "校验".into(), ok: false, detail: msg.clone() });
+            r.steps.push(StepResult {
+                name: "校验".into(),
+                ok: false,
+                detail: msg.clone(),
+            });
             // 这一步失败**不安全回滚**：目标里的副本是有效增量，留着下次接着补。
             r.error = Some(msg);
             return r;
         }
         Err(e) => {
-            r.steps.push(StepResult { name: "校验".into(), ok: false, detail: e.clone() });
+            r.steps.push(StepResult {
+                name: "校验".into(),
+                ok: false,
+                detail: e.clone(),
+            });
             return r.fail(e);
         }
     }
@@ -319,7 +331,11 @@ pub fn run(plan: &Plan, cb: &mut dyn FnMut(Progress)) -> MigrateReport {
             p
         }
         Err(e) => {
-            r.steps.push(StepResult { name: "快照".into(), ok: false, detail: e.clone() });
+            r.steps.push(StepResult {
+                name: "快照".into(),
+                ok: false,
+                detail: e.clone(),
+            });
             return r.fail(e);
         }
     };
@@ -332,7 +348,11 @@ pub fn run(plan: &Plan, cb: &mut dyn FnMut(Progress)) -> MigrateReport {
         percent: Some(90),
     });
     if let Err(e) = win::make_junction(&src, &dest) {
-        r.steps.push(StepResult { name: "建联接".into(), ok: false, detail: e.clone() });
+        r.steps.push(StepResult {
+            name: "建联接".into(),
+            ok: false,
+            detail: e.clone(),
+        });
         // 回滚：把快照改回去
         r.rolled_back = win::rename_back(&snapshot, &src).is_ok();
         return r.fail(e);
@@ -356,7 +376,11 @@ pub fn run(plan: &Plan, cb: &mut dyn FnMut(Progress)) -> MigrateReport {
             detail: format!("直接读原路径，看到 {n} 个条目"),
         }),
         Err(e) => {
-            r.steps.push(StepResult { name: "验证联接".into(), ok: false, detail: e.clone() });
+            r.steps.push(StepResult {
+                name: "验证联接".into(),
+                ok: false,
+                detail: e.clone(),
+            });
             let _ = win::remove_junction(&src);
             r.rolled_back = win::rename_back(&snapshot, &src).is_ok();
             r.snapshot = None;
@@ -379,7 +403,10 @@ pub fn run(plan: &Plan, cb: &mut dyn FnMut(Progress)) -> MigrateReport {
 pub fn rollback(def: &AgentDef, src: &Path) -> Result<String, String> {
     let snaps = snapshots_of(src);
     let Some((snap, _ts)) = snaps.into_iter().next() else {
-        return Err(format!("{} 没有找到快照（*.moved-*），无法回滚", src.display()));
+        return Err(format!(
+            "{} 没有找到快照（*.moved-*），无法回滚",
+            src.display()
+        ));
     };
 
     if src.exists() && !fsutil::is_link(src) {
@@ -407,7 +434,9 @@ pub fn list_snapshots(defs: &[AgentDef]) -> Vec<Snapshot> {
     let mut out = Vec::new();
     for def in defs {
         for tpl in &def.paths {
-            let Some(p) = paths::expand(tpl) else { continue };
+            let Some(p) = paths::expand(tpl) else {
+                continue;
+            };
             for (snap, ts) in snapshots_of(&p) {
                 let m = fsutil::measure(&snap, 400_000, std::time::Duration::from_secs(20));
                 out.push(Snapshot {
@@ -432,9 +461,11 @@ pub fn list_snapshots(defs: &[AgentDef]) -> Vec<Snapshot> {
 /// ⚠️ 删掉之后这次迁移就**不能回滚**了 —— 界面上必须先跟用户确认。
 pub fn cleanup(snapshot: &Path, permanent: bool) -> Result<u64, String> {
     if !permanent {
-        return Err("回收站删除尚未实现（SHFileOperation 不支持超长路径，需要逐条兜底）；\
+        return Err(
+            "回收站删除尚未实现（SHFileOperation 不支持超长路径，需要逐条兜底）；\
                     请显式选择永久删除"
-            .to_string());
+                .to_string(),
+        );
     }
     win::remove_dir_forced(snapshot)
 }
@@ -460,7 +491,13 @@ fn norm_for_compare(p: &Path) -> String {
 fn dedup_labels(holders: &[crate::locks::Holder]) -> Vec<String> {
     let mut v: Vec<String> = holders
         .iter()
-        .map(|h| if h.app.is_empty() { format!("pid {}", h.pid) } else { h.app.clone() })
+        .map(|h| {
+            if h.app.is_empty() {
+                format!("pid {}", h.pid)
+            } else {
+                h.app.clone()
+            }
+        })
         .collect();
     v.sort();
     v.dedup();
@@ -652,7 +689,9 @@ mod win {
             .flatten()
             .count();
         if n == 0 {
-            let d = std::fs::read_dir(dest).map(|r| r.flatten().count()).unwrap_or(0);
+            let d = std::fs::read_dir(dest)
+                .map(|r| r.flatten().count())
+                .unwrap_or(0);
             if d == 0 {
                 return Err("联接建成但两边都是空的 —— 疑似目标目录没内容".to_string());
             }
@@ -671,7 +710,10 @@ mod win {
 
         // 🔴 应用会给「当天日志目录」加 `(OI)(CI)(DENY)(DE,DC)`，里面文件继承「拒绝删除」
         // → 直接删会 `os error 5`。先对整棵子树 reset 掉显式 ACE，还原成继承。
-        let _ = run("icacls", &[&root.to_string_lossy(), "/reset", "/T", "/C", "/Q"]);
+        let _ = run(
+            "icacls",
+            &[&root.to_string_lossy(), "/reset", "/T", "/C", "/Q"],
+        );
 
         // 🔴 `remove_dir_all` 在 Windows 上会识别重解析点、**只删链接本身不递归进去**
         // （标准库自带保护）。这正是我们要的：绝不把目标盘的真实数据删掉。
@@ -706,8 +748,14 @@ mod win {
             assert!(is_under_root(r"C:\Users\x\.codex\a.txt", root));
             assert!(is_under_root(r"\\?\C:\Users\x\.codex\a.txt", root));
             assert!(is_under_root(r"c:\users\x\.codex\sub\b.bin", root));
-            assert!(is_under_root(r"C:/Users/x/.codex/a.txt", root), "正斜杠也要认");
-            assert!(is_under_root("  C:\\Users\\x\\.codex\\a  ", root), "要 trim 缩进");
+            assert!(
+                is_under_root(r"C:/Users/x/.codex/a.txt", root),
+                "正斜杠也要认"
+            );
+            assert!(
+                is_under_root("  C:\\Users\\x\\.codex\\a  ", root),
+                "要 trim 缩进"
+            );
 
             // 🔴 前缀相同但**不是**子路径 —— 没有分隔符边界
             assert!(!is_under_root(r"C:\Users\x\.codex2\a.txt", root));
@@ -857,10 +905,7 @@ mod tests {
             Path::new(r"D:\a\b\c"),
             Path::new(r"D:\a\b")
         ));
-        assert!(path_starts_with(
-            Path::new(r"D:\a\b"),
-            Path::new(r"D:\a\b")
-        ));
+        assert!(path_starts_with(Path::new(r"D:\a\b"), Path::new(r"D:\a\b")));
         // 前缀相同但不是子路径
         assert!(!path_starts_with(
             Path::new(r"D:\a\bbc"),
@@ -905,9 +950,18 @@ mod tests {
     #[test]
     fn dedup_labels_collapses_same_app() {
         let h = vec![
-            crate::locks::Holder { pid: 1, app: "X.exe".into() },
-            crate::locks::Holder { pid: 2, app: "X.exe".into() },
-            crate::locks::Holder { pid: 3, app: "Y.exe".into() },
+            crate::locks::Holder {
+                pid: 1,
+                app: "X.exe".into(),
+            },
+            crate::locks::Holder {
+                pid: 2,
+                app: "X.exe".into(),
+            },
+            crate::locks::Holder {
+                pid: 3,
+                app: "Y.exe".into(),
+            },
         ];
         assert_eq!(dedup_labels(&h), vec!["X.exe", "Y.exe"]);
     }
