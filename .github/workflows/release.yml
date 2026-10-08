@@ -130,6 +130,20 @@ jobs:
 
       - run: npm ci
 
+      # 🔴 先确认 Tauri CLI 真的可用。
+      # 踩过的坑：`npx tauri ...` 在本地没找到 CLI 时**会去 npm registry 下载同名包** ——
+      # 而 registry 上确实有一个**无关的旧 `tauri` 包**（Tauri v1 时代的），
+      # 它的参数完全不同，于是报 `exit code 2`（clap 参数错误），
+      # 日志只有几 KB，看起来像"构建失败"，实际是**根本没用上我们的 CLI**。
+      - name: 确认 Tauri CLI
+        run: |
+          echo "--- node_modules/.bin/tauri ---"
+          ls -l node_modules/.bin/tauri || echo "✗ 没有 tauri 可执行文件"
+          echo "--- @tauri-apps 下装了什么 ---"
+          ls node_modules/@tauri-apps/ || true
+          echo "--- 版本 ---"
+          npx --no-install tauri --version || echo "✗ CLI 不可用"
+
       - name: 构建
         # 🔴 必须显式用 bash：Windows runner 默认是 pwsh，
         # 而下面这段用的是 bash 语法（`set -o pipefail` / `${var//x/y}`）。
@@ -137,12 +151,11 @@ jobs:
         run: |
           # 同 ci.yml：失败原因要靠 annotation 传出来（job 日志下载实测 401）
           #
-          # 🔴 直接用 `npx tauri build` 而不是 `npm run tauri build` ——
-          # npm 会把 `--target xxx` 这类参数当成自己的选项吞掉，
-          # 结果 Tauri 收到的是 `tauri build`（缺 --target）而在 macOS 上按本机架构打，
-          # 或者直接报 `unexpected argument 'universal-apple-darwin' found`。
+          # 🔴 用 `npx --no-install`：**强制只用本地装的 CLI**，绝不联网下载同名包。
+          # 🔴 也不用 `npm run tauri build <args>`：npm 会把 `--target` 当自己的选项吞掉，
+          # 导致 Tauri 收到 `tauri build`（缺 --target）而按本机架构打包。
           set -o pipefail
-          if npx tauri build ${{ matrix.args }} 2>&1 | tee /tmp/build.log; then
+          if npx --no-install tauri build ${{ matrix.args }} 2>&1 | tee /tmp/build.log; then
             echo "✓ 构建完成，产物清单："
             find target -path '*bundle*' -type f -printf '%10s  %p\n' | sort -k2 | head -30
             echo "（若上面为空，说明 bundle 没产出 —— 后面 upload 会失败）"
