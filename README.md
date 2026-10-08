@@ -24,7 +24,7 @@
 | 平台 | 产物 |
 |---|---|
 | Windows 10 / 11 | NSIS 安装包（`.exe`）· MSI（`.msi`） |
-| macOS | `.dmg` —— **通用包**，一个文件同时支持 Apple Silicon 与 Intel |
+| macOS | `.dmg` —— Apple Silicon 与 Intel **各一个**，按自己的芯片下载 |
 | Linux | `.AppImage` · `.deb` · `.rpm` |
 
 > 打 tag（`v*`）会自动触发三平台构建并发布。构建前先跑一遍完整检查 ——

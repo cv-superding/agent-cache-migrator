@@ -84,12 +84,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS 构建 universal 包：一个 dmg 同时支持 Apple Silicon 与 Intel，
-          # 省得用户对着两个包猜自己该下哪个。
+          # macOS 分两个 job、各出一个 dmg，**不用 universal**：
+          # universal 要把两个架构都编一遍再用 lipo 合并，多一层变数、也更慢；
+          # 分开构建更简单可靠，用户按自己的芯片下载即可。
           - os: macos-latest
-            name: macOS（通用）
-            target: aarch64-apple-darwin,x86_64-apple-darwin
-            args: --target universal-apple-darwin
+            name: macOS（Apple Silicon）
+            target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin
+          - os: macos-latest
+            name: macOS（Intel）
+            target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
           - os: ubuntu-22.04
             name: Linux（x64）
             target: x86_64-unknown-linux-gnu
@@ -156,6 +161,16 @@ jobs:
             done
             exit 1
           fi
+
+      # 兜底：万一上面的诊断段也没能把信息带出来（annotation 有配额、格式也可能被截），
+      # 就把完整构建日志当 artifact 传上去 —— artifact 下载不受 job 日志那套权限限制。
+      - name: 失败时上传构建日志
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-log-${{ matrix.os }}
+          path: /tmp/build.log
+          if-no-files-found: ignore
 
       # 🔴 路径是 **仓库根目录的 `target/`**，不是 `src-tauri/target/` ——
       # 这是 Cargo workspace（根 Cargo.toml 有 [workspace]），
