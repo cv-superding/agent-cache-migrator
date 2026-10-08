@@ -49,7 +49,23 @@ jobs:
           fi
 
       - name: 内核单测（含 unix 端到端迁移）
-        run: cargo test -p acm-core -p acm-cli --all-targets
+        run: |
+          # 同 ci.yml：失败时把摘要打成 annotation（job 日志下载要额外权限，读不到）
+          set -o pipefail
+          if cargo test -p acm-core -p acm-cli --all-targets 2>&1 | tee /tmp/test.log; then
+            echo "✓ 测试全部通过"
+          else
+            {
+              grep -nE "FAILED|panicked|assertion|^error|left ==|right ==|test result:" /tmp/test.log | head -12
+              echo "=== 日志末尾 ==="
+              tail -20 /tmp/test.log
+            } | while IFS= read -r line || [ -n "$line" ]; do
+              line="${line//$'\r'/}"
+              line="${line//%/%25}"
+              if [ -n "$line" ]; then echo "::error::$line"; fi
+            done
+            exit 1
+          fi
 
       - uses: actions/setup-node@v7
         with:

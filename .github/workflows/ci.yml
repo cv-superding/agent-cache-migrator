@@ -38,7 +38,26 @@ jobs:
         run: cargo fmt --all --check
 
       - name: 跑单测
-        run: cargo test -p acm-core -p acm-cli --all-targets
+        run: |
+          # 🔴 失败时把摘要显式打成 annotation。
+          # 原因：GitHub 的 **job 日志下载要额外权限**（实测 API 会 401/403），
+          # 而 annotation 是能可靠读到的。不加这段的话，失败信息只有一个
+          # "Process completed with exit code 101" —— 等于没有。
+          set -o pipefail
+          if cargo test -p acm-core -p acm-cli --all-targets 2>&1 | tee /tmp/test.log; then
+            echo "✓ 测试全部通过"
+          else
+            {
+              grep -nE "FAILED|panicked|assertion|^error|left ==|right ==|test result:" /tmp/test.log | head -12
+              echo "=== 日志末尾 ==="
+              tail -20 /tmp/test.log
+            } | while IFS= read -r line || [ -n "$line" ]; do
+              line="${line//$'\r'/}"
+              line="${line//%/%25}"
+              if [ -n "$line" ]; then echo "::error::$line"; fi
+            done
+            exit 1
+          fi
 
   # ---------------------------------------------------------------- 前端
   frontend:
