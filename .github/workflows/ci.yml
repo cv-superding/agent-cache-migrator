@@ -48,9 +48,12 @@ jobs:
             echo "✓ 测试全部通过"
           else
             {
-              grep -nE "FAILED|panicked|assertion|^error|left ==|right ==|test result:" /tmp/test.log | head -12
+              # ⚠️ 每个可能"无输出"的命令都要 `|| true`：bash 带 `-e`、上面又开了
+              # `pipefail` —— grep 没匹配到会返回 1，导致整个脚本**提前退出**、
+              # 一条诊断都发不出来。踩过。
+              grep -nE "FAILED|panicked|assertion|^error|left ==|right ==|test result:" /tmp/test.log | head -12 || true
               echo "=== 日志末尾 ==="
-              tail -20 /tmp/test.log
+              tail -20 /tmp/test.log || true
             } | while IFS= read -r line || [ -n "$line" ]; do
               line="${line//$'\r'/}"
               line="${line//%/%25}"

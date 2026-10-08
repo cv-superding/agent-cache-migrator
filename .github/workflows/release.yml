@@ -126,21 +126,29 @@ jobs:
       - run: npm ci
 
       - name: 构建
-        # 🔴 必须显式用 bash：Windows runner 默认是 PowerShell，
+        # 🔴 必须显式用 bash：Windows runner 默认是 pwsh，
         # 而下面这段用的是 bash 语法（`set -o pipefail` / `${var//x/y}`）。
         shell: bash
         run: |
           # 同 ci.yml：失败原因要靠 annotation 传出来（job 日志下载实测 401）
+          #
+          # 🔴 直接用 `npx tauri build` 而不是 `npm run tauri build` ——
+          # npm 会把 `--target xxx` 这类参数当成自己的选项吞掉，
+          # 结果 Tauri 收到的是 `tauri build`（缺 --target）而在 macOS 上按本机架构打，
+          # 或者直接报 `unexpected argument 'universal-apple-darwin' found`。
           set -o pipefail
-          if npm run tauri build ${{ matrix.args }} 2>&1 | tee /tmp/build.log; then
+          if npx tauri build ${{ matrix.args }} 2>&1 | tee /tmp/build.log; then
             echo "✓ 构建完成，产物清单："
             find target -path '*bundle*' -type f -printf '%10s  %p\n' | sort -k2 | head -30
             echo "（若上面为空，说明 bundle 没产出 —— 后面 upload 会失败）"
           else
             {
-              grep -nE "error(\[|:| )|Error:|failed|FAILED|panicked|not found" /tmp/build.log | head -15
-              echo "=== 日志末尾 ==="
-              tail -30 /tmp/build.log
+              # ⚠️ 每个可能"无输出"的命令都要 `|| true`：bash 带了 `-e`，
+              # 而上面又开了 `pipefail` —— grep 没匹配到就会返回 1，
+              # 整个脚本会**提前退出**，结果一条诊断都发不出来。踩过。
+              grep -nE "error(\[|:| )|Error:|failed|FAILED|panicked|not found|unexpected argument" /tmp/build.log | head -20 || true
+              echo "=== 日志末尾 40 行 ==="
+              tail -40 /tmp/build.log || true
             } | while IFS= read -r line || [ -n "$line" ]; do
               line="${line//$'\r'/}"
               line="${line//%/%25}"
