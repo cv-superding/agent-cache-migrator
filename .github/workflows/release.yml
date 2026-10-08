@@ -146,33 +146,29 @@ jobs:
 
       - name: 构建
         # 🔴 必须显式用 bash：Windows runner 默认是 pwsh，
-        # 而下面这段用的是 bash 语法（`set -o pipefail` / `${var//x/y}`）。
+        # 而下面这段用的是 bash 语法。
         shell: bash
         run: |
-          # 同 ci.yml：失败原因要靠 annotation 传出来（job 日志下载实测 401）
+          # 刻意写成**最直白的形式**（不用 if cmd | tee; then ... 那种管道+条件组合）：
+          # 之前那版在 macOS 上一条诊断都发不出来，怀疑是 bash 版本/管道行为差异。
+          # 现在：命令先跑、退出码显式接住、失败时把整份日志 base64 成一条 annotation。
           #
-          # 🔴 用 `npx --no-install`：**强制只用本地装的 CLI**，绝不联网下载同名包。
-          # 🔴 也不用 `npm run tauri build <args>`：npm 会把 `--target` 当自己的选项吞掉，
-          # 导致 Tauri 收到 `tauri build`（缺 --target）而按本机架构打包。
-          set -o pipefail
-          if npx --no-install tauri build ${{ matrix.args }} 2>&1 | tee /tmp/build.log; then
-            echo "✓ 构建完成，产物清单："
-            find target -path '*bundle*' -type f -printf '%10s  %p\n' | sort -k2 | head -30
-            echo "（若上面为空，说明 bundle 没产出 —— 后面 upload 会失败）"
-          else
-            echo "::error::构建失败，下面是完整日志（base64，解码可读）"
-            # annotation 有行数/长度配额，逐行发会被截到只剩一两行 —— 实测就吃过这个亏
-            # （只拿到一句 exit code，完全看不出原因）。
-            # 这里把整个日志 base64 成**一条** annotation，一次带全。
-            # 解码： base64 -d <<< '<粘贴>' | head -100
-            {
-              echo "=== 日志大小 $(wc -c < /tmp/build.log 2>/dev/null || echo 0) 字节 ==="
-            } | while IFS= read -r line; do echo "::error::$line"; done || true
-            base64 /tmp/build.log 2>/dev/null | tr -d '\n' | head -c 55000 | while IFS= read -r b64; do
-              echo "::error::LOG_BASE64::$b64"
-            done || true
-            exit 1
+          # 🔴 用 `npx --no-install`：强制只用本地装的 CLI。
+          # 不加 --no-install 时，本地找不到会去 registry 下载**同名的无关旧包**
+          # （`tauri` 是 Tauri v1 时代的包），参数完全不同、报错极具误导性。
+          set +e
+          npx --no-install tauri build ${{ matrix.args }} > /tmp/build.log 2>&1
+          CODE=$?
+          echo "构建退出码: $CODE"
+          if [ "$CODE" -ne 0 ]; then
+            echo "::error::构建失败，退出码 $CODE；完整日志见下方 LOG_BASE64"
+            echo "::error::日志大小 $(wc -c < /tmp/build.log) 字节"
+            echo "::error::LOG_BASE64::$(base64 /tmp/build.log | tr -d '\n' | head -c 52000)"
+            exit "$CODE"
           fi
+          echo "✓ 构建完成，产物清单："
+          find target -path '*bundle*' -type f -printf '%10s  %p\n' 2>/dev/null | sort -k2 | head -30 || \
+            find target -path '*bundle*' -type f | head -30 || echo "（没有 bundle 产物）"
 
       # 兜底：万一上面的诊断段也没能把信息带出来（annotation 有配额、格式也可能被截），
       # 就把完整构建日志当 artifact 传上去 —— artifact 下载不受 job 日志那套权限限制。
