@@ -134,7 +134,7 @@ jobs:
           set -o pipefail
           if npm run tauri build ${{ matrix.args }} 2>&1 | tee /tmp/build.log; then
             echo "✓ 构建完成，产物清单："
-            find src-tauri/target -path '*bundle*' -type f -printf '%10s  %p\n' | sort -k2 | head -30
+            find target -path '*bundle*' -type f -printf '%10s  %p\n' | sort -k2 | head -30
             echo "（若上面为空，说明 bundle 没产出 —— 后面 upload 会失败）"
           else
             {
@@ -149,25 +149,27 @@ jobs:
             exit 1
           fi
 
-      # `--target` 构建时产物在 `target/<triple>/release/bundle/`，
-      # 不带 `--target` 时在 `target/release/bundle/` —— 两套都要收。
+      # 🔴 路径是 **仓库根目录的 `target/`**，不是 `src-tauri/target/` ——
+      # 这是 Cargo workspace（根 Cargo.toml 有 [workspace]），
+      # **workspace 的构建产物统一落在根的 target 下**。
+      # 一开始按 `src-tauri/target/...` 写，结果三个平台都「构建成功但找不到产物」。
       - uses: actions/upload-artifact@v7
         with:
           name: bundle-${{ matrix.os }}
           if-no-files-found: error
           path: |
-            src-tauri/target/release/bundle/**/*.exe
-            src-tauri/target/release/bundle/**/*.msi
-            src-tauri/target/release/bundle/**/*.dmg
-            src-tauri/target/release/bundle/**/*.AppImage
-            src-tauri/target/release/bundle/**/*.deb
-            src-tauri/target/release/bundle/**/*.rpm
-            src-tauri/target/*/release/bundle/**/*.exe
-            src-tauri/target/*/release/bundle/**/*.msi
-            src-tauri/target/*/release/bundle/**/*.dmg
-            src-tauri/target/*/release/bundle/**/*.AppImage
-            src-tauri/target/*/release/bundle/**/*.deb
-            src-tauri/target/*/release/bundle/**/*.rpm
+            target/release/bundle/**/*.exe
+            target/release/bundle/**/*.msi
+            target/release/bundle/**/*.dmg
+            target/release/bundle/**/*.AppImage
+            target/release/bundle/**/*.deb
+            target/release/bundle/**/*.rpm
+            target/*/release/bundle/**/*.exe
+            target/*/release/bundle/**/*.msi
+            target/*/release/bundle/**/*.dmg
+            target/*/release/bundle/**/*.AppImage
+            target/*/release/bundle/**/*.deb
+            target/*/release/bundle/**/*.rpm
 
   # ---------------------------------------------------------------- 汇总发布
   #
