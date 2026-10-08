@@ -176,7 +176,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: build-log-${{ matrix.os }}
+          name: build-log-${{ matrix.target }}
           path: /tmp/build.log
           if-no-files-found: ignore
 
@@ -186,7 +186,10 @@ jobs:
       # 一开始按 `src-tauri/target/...` 写，结果三个平台都「构建成功但找不到产物」。
       - uses: actions/upload-artifact@v7
         with:
-          name: bundle-${{ matrix.os }}
+          # 🔴 artifact 名必须**按 target 区分**，不能用 `matrix.os` ——
+          # 两个 macOS job 都在 `macos-latest` 上跑，用 os 命名会让它们的产物
+          # **互相覆盖**，最后只留下一个（实测：x86_64 的 dmg 就这么丢了）。
+          name: bundle-${{ matrix.target }}
           if-no-files-found: error
           path: |
             target/release/bundle/**/*.exe
@@ -224,5 +227,21 @@ jobs:
       - uses: softprops/action-gh-release@v3
         with:
           files: artifacts/**/*
+          body: |
+            ## 下哪个？
+
+            | 平台 | 文件 |
+            |---|---|
+            | Windows 10 / 11 | `AgentCache_<版本>_x64-setup.exe`（NSIS 安装包，推荐）· `.msi` |
+            | macOS（Apple Silicon） | `AgentCache_<版本>_aarch64.dmg` |
+            | macOS（Intel） | `AgentCache_<版本>_x64.dmg` |
+            | Linux | `AppImage`（免安装，`chmod +x` 后直接跑）· `.deb` · `.rpm` |
+
+            > **迁移前请完全退出对应的 Agent。** 窗口关掉不算退出 ——
+            > 应用在后台持续改写缓存时，复制校验永远等不到「0 差异」。
+
+            AgentCache 会把 Agent 的数据目录搬到别的盘，再在原路径留一个重定向点：
+            Windows 用 NTFS 目录联接，macOS / Linux 用符号链接。
+            **原目录只改名保留（不删除），随时可回滚。**
           generate_release_notes: true
           draft: false
