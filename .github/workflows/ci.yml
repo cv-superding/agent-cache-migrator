@@ -37,6 +37,29 @@ jobs:
       - name: 版本/格式自检
         run: cargo fmt --all --check
 
+      # 🔴 防回归：所有外部命令必须走 `acm_core::syscmd::command`。
+      #
+      # 为什么值得一条 CI 检查：Windows GUI 进程（`windows_subsystem = "windows"`）
+      # 调用控制台程序时，会**为每个子进程新建一个控制台窗口** —— 用户看到一串黑框。
+      # 修法是创建时带 `CREATE_NO_WINDOW`，但这是「每个调用点都得记得」的约定，
+      # 而本项目已经踩过一次：`robocopy` 加了、`tasklist` 漏了，
+      # 结果启动一次弹十几个窗口（检测 13 个 Agent × 两阶段）。
+      #
+      # 约定靠人记必然再漏，所以这里用一条 grep 变成硬约束。
+      # 模式带 `(` 是为了不误伤注释里提到的 `Command::new`（那是反引号包裹、无括号）。
+      - name: 子进程入口检查
+        run: |
+          bad=$(grep -rn --include='*.rs' 'Command::new(' crates/ src-tauri/src/ \
+                  | grep -v 'crates/acm-core/src/syscmd.rs' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::外部命令必须走 acm_core::syscmd::command —— 直接 Command::new 会让 Windows GUI 每次调用都弹一个控制台窗口"
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::$line"
+            done <<< "$bad"
+            exit 1
+          fi
+          echo "✓ 所有子进程调用都经过 syscmd::command"
+
       - name: 跑单测
         run: |
           # 🔴 失败时把摘要显式打成 annotation。

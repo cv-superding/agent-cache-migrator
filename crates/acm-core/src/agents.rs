@@ -100,8 +100,19 @@ pub fn load(user: Option<&Path>) -> Result<Vec<AgentDef>, String> {
     Ok(out)
 }
 
-/// 检测一个 Agent。
+/// 检测一个 Agent（自己取一次进程快照）。
+///
+/// ⚠️ 要检测多个 Agent 请用 [`detect_all`] —— 它会**共用一份进程快照**。
+/// 逐个调这个函数的话，每个都会起一次 `tasklist`（慢，且在 GUI 里会连弹黑框）。
 pub fn detect(def: &AgentDef, opts: &DetectOpts) -> DetectedAgent {
+    detect_with(def, opts, &procs::snapshot())
+}
+
+/// 检测一个 Agent，进程表由调用方传入。
+///
+/// `procs` 是「当前运行的进程名」快照 —— 它是纯查表输入，所以同一份快照
+/// 可以喂给所有 Agent，子进程只起一次。
+pub fn detect_with(def: &AgentDef, opts: &DetectOpts, procs: &[String]) -> DetectedAgent {
     let mut how: Vec<String> = Vec::new();
     let mut hits: Vec<PathHit> = Vec::new();
     let mut total = Measure::default();
@@ -168,7 +179,7 @@ pub fn detect(def: &AgentDef, opts: &DetectOpts) -> DetectedAgent {
     }
 
     let broken_links = check_runtime_links(def, &hits);
-    let running = procs::running_matching(&def.processes);
+    let running = procs::matching_in(procs, &def.processes);
 
     let detected = hits.iter().any(|h| h.kind != "missing") || !updaters.is_empty();
 
@@ -287,8 +298,14 @@ pub fn expand_glob(base: &Path, pattern: &str) -> Vec<PathBuf> {
 }
 
 /// 检测全部（顺序与注册表一致）。
+///
+/// 🔴 **进程快照只取一次**，所有 Agent 共用。原来写成
+/// `defs.iter().map(|d| detect(d, opts))` —— 每个 Agent 各起一次 `tasklist`，
+/// 内置 13 个就是 13 个子进程：首屏白等一两秒，而且每个子进程都会在
+/// 桌面上弹一个控制台窗口。
 pub fn detect_all(defs: &[AgentDef], opts: &DetectOpts) -> Vec<DetectedAgent> {
-    defs.iter().map(|d| detect(d, opts)).collect()
+    let procs = procs::snapshot();
+    defs.iter().map(|d| detect_with(d, opts, &procs)).collect()
 }
 
 #[cfg(test)]

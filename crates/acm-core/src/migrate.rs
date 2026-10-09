@@ -532,17 +532,15 @@ fn snapshots_of(target: &Path) -> Vec<(PathBuf, String)> {
 #[cfg(windows)]
 mod imp {
     use super::{fsutil, SNAPSHOT_MARK};
+    use crate::syscmd;
     use std::path::{Path, PathBuf};
-    use std::process::{Command, Output, Stdio};
-
-    /// 关掉子进程的控制台窗口（否则 GUI 里会闪黑框）。
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    use std::process::{Output, Stdio};
 
     fn run(program: &str, args: &[&str]) -> std::io::Result<Output> {
-        use std::os::windows::process::CommandExt;
-        Command::new(program)
+        // 🔴 走 `syscmd::command`（已带 `CREATE_NO_WINDOW`）—— robocopy 是控制台程序，
+        // GUI 进程直接 `Command::new` 会让每次调用都闪一个黑框。
+        syscmd::command(program)
             .args(args)
-            .creation_flags(CREATE_NO_WINDOW)
             .stdin(Stdio::null())
             .output()
     }
@@ -1141,7 +1139,7 @@ pub fn drives() -> Vec<String> {
 /// 就是为脚本解析而存在的，Linux 与 macOS 行为一致。
 #[cfg(unix)]
 fn mount_points() -> Vec<(String, u64, u64)> {
-    let Ok(out) = std::process::Command::new("df").args(["-P", "-k"]).output() else {
+    let Ok(out) = crate::syscmd::command("df").args(["-P", "-k"]).output() else {
         return Vec::new();
     };
     let text = String::from_utf8_lossy(&out.stdout);
@@ -1249,7 +1247,7 @@ mod sys {
 #[cfg(unix)]
 mod sys {
     pub fn volume_space(p: &str) -> (u64, u64) {
-        let Ok(out) = std::process::Command::new("df")
+        let Ok(out) = crate::syscmd::command("df")
             .args(["-P", "-k"])
             .arg(p)
             .output()

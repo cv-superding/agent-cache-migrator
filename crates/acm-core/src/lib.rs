@@ -8,6 +8,7 @@
 //! - [`locks`] —— **精确占用检测**（Windows Restart Manager：谁锁着这个目录）
 //! - [`procs`] —— 进程探测（按名字匹配，作为兜底）
 //! - [`migrate`] —— **迁移内核**：复制 → 校验 → 快照 → 建联接 → 验证（含回滚）
+//! - [`syscmd`] —— 子进程的**统一入口**（Windows 上关掉子进程控制台窗口）
 //!
 //! 设计原则：**内核不认识任何具体 Agent**。所有 Agent 知识都在 `agents.toml` 里，
 //! 加一个 Agent 只改配置。这样内核可以同时被 GUI、CLI 和别的项目复用。
@@ -19,8 +20,9 @@ pub mod migrate;
 pub mod model;
 pub mod paths;
 pub mod procs;
+pub mod syscmd;
 
-pub use agents::{detect, detect_all, load, parse, DetectOpts, BUILTIN_TOML};
+pub use agents::{detect, detect_all, detect_with, load, parse, DetectOpts, BUILTIN_TOML};
 pub use locks::Holder;
 pub use migrate::{MigrateReport, Plan, Progress, Snapshot};
 pub use model::{AgentDef, DetectedAgent, PathHit, RegistryFile};
