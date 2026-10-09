@@ -13,6 +13,9 @@ src-tauri/gen/schemas/
 *.local.toml
 *.log
 
+# 工作区私有内容：本地记忆、对接文档、临时笔记（不入库）
+.workbuddy/
+
 # 编辑器 / 系统
 .vscode/
 .idea/
