@@ -199,6 +199,7 @@ export function Confirm({
               className="btn"
               onClick={() => {
                 const f = extra.onOk;
+                onCancel(); // 次要动作也要关掉对话框，否则弹窗会一直压在界面上
                 f();
               }}
             >

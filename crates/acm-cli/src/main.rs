@@ -32,7 +32,7 @@ plan 选项:
 
 migrate 选项:
   --dest <根目录>        同 plan
-  --yes                  跳过交互确认（脚本/自动化用）
+  --yes                  跳过交互确认（脚本/自动化用；--json 也隐含 --yes）
   --json                 输出 JSON 报告（进度走 stderr）
   --config <路径>        同上
 
@@ -200,14 +200,33 @@ fn print_report(all: &[acm_core::DetectedAgent], measured: bool) {
     );
 }
 
+/// 取**位置参数**（agent id）。
+///
+/// 🔴 不能用「第一个不以 -- 开头的参数」：`acm migrate --dest D:\x codex`
+/// 里 `D:\x` 也不以 -- 开头，会被误当成 id。已知带值的选项后面要跳过。
+fn positional(args: &[String], usage: &str) -> Result<String, String> {
+    let mut skip_next = false;
+    for a in args {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if a == "--dest" || a == "--config" || a == "--only" {
+            skip_next = true;
+            continue;
+        }
+        if a.starts_with("--") {
+            continue;
+        }
+        return Ok(a.clone());
+    }
+    Err(usage.to_string())
+}
+
 // ---------------------------------------------------------------- plan
 
 fn cmd_plan(args: &[String]) -> Result<(), String> {
-    let id = args
-        .iter()
-        .find(|a| !a.starts_with("--"))
-        .ok_or("用法：acm plan <agent-id> [--dest <目标根目录>]")?
-        .clone();
+    let id = positional(args, "用法：acm plan <agent-id> [--dest <目标根目录>]")?;
     let cfg = flag_path(args, "--config");
 
     let dest_root = match flag_path(args, "--dest") {
@@ -294,11 +313,7 @@ fn print_plan(p: &migrate::Plan) {
 
 /// 解析公共参数并解析出 (定义, 源目录)。
 fn resolve_target(args: &[String], usage: &str) -> Result<(acm_core::AgentDef, PathBuf), String> {
-    let id = args
-        .iter()
-        .find(|a| !a.starts_with("--"))
-        .ok_or(usage)?
-        .clone();
+    let id = positional(args, usage)?;
     let cfg = flag_path(args, "--config");
     let defs = agents::load(cfg.as_deref())?;
     let def = defs

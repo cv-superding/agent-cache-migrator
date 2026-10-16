@@ -277,7 +277,15 @@ pub fn run(plan: &Plan, cb: &mut dyn FnMut(Progress)) -> MigrateReport {
         percent: Some(5),
     });
     let expected = plan.src_measure.files;
+    // 🔴 大目录每秒可能复制上千个文件 —— 每个文件都 emit 一次事件会把
+    // Tauri 的事件队列打爆、界面直接卡死。节流：非最终进度 200ms 才推一次。
+    let mut last_emit = std::time::Instant::now() - std::time::Duration::from_millis(10_000);
     let mut on_file = |n: u64| {
+        let is_final = expected > 0 && n >= expected;
+        if !is_final && last_emit.elapsed() < std::time::Duration::from_millis(200) {
+            return;
+        }
+        last_emit = std::time::Instant::now();
         // 复制阶段占 5% ~ 65%；measure 被上限截断时分母偏小，可能提前到顶 —— 钳在这里即可
         let percent = if expected > 0 {
             // checked_div：expected==0 时给 None（没有分母就不显示百分比）
