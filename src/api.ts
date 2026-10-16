@@ -94,6 +94,38 @@ export function snapshots(): Promise<Snapshot[]> {
   return invoke("snapshots");
 }
 
+/** 迁移历史（history.jsonl，新的在前）。 */
+export function history(all = false): Promise<{
+  items: {
+    ts: string;
+    agent: string;
+    src: string;
+    dest: string;
+    ok: boolean;
+    error?: string | null;
+    rolledBack?: boolean;
+    snapshot?: string | null;
+  }[];
+  path: string;
+}> {
+  if (DEMO) {
+    return Promise.resolve({
+      items: [
+        {
+          ts: "2026-10-17T00:00:00",
+          agent: "codex",
+          src: "C:\\demo\\.codex",
+          dest: "D:\\AgentCache\\codex",
+          ok: true,
+          rolledBack: false,
+        },
+      ],
+      path: "C:\\demo\\history.jsonl",
+    });
+  }
+  return invoke("history", { all });
+}
+
 export function deleteSnapshot(
   path: string,
   permanent: boolean,
@@ -143,6 +175,7 @@ export const api = {
   rollback,
   repair,
   snapshots,
+  history,
   deleteSnapshot,
   openPath,
   version,

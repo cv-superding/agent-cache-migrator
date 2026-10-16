@@ -61,6 +61,20 @@ export default function App() {
   const [log, setLog] = useState<string[]>([]);
   const [rolling, setRolling] = useState(false);
   const [repairing, setRepairing] = useState(false);
+  const [history, setHistory] = useState<{
+    items: {
+      ts: string;
+      agent: string;
+      src: string;
+      dest: string;
+      ok: boolean;
+      error?: string | null;
+      rolledBack?: boolean;
+      snapshot?: string | null;
+    }[];
+    path: string;
+  } | null>(null);
+  const [allHistory, setAllHistory] = useState(false);
 
   // ---- 界面
   const [scanning, setScanning] = useState(true);
@@ -93,6 +107,7 @@ export default function App() {
       if (d.defaultDestRoot) setDestRoot((v) => v || d.defaultDestRoot!);
     });
     void refreshSnapshots();
+    void refreshHistory(allHistory);
     void refreshAgents(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -122,6 +137,14 @@ export default function App() {
       setSnaps(await api.snapshots());
     } catch {
       /* 快照读不到不影响主流程 */
+    }
+  }
+
+  async function refreshHistory(all = false) {
+    try {
+      setHistory(await api.history(all));
+    } catch {
+      /* 历史读不到不影响主流程 */
     }
   }
 
@@ -191,6 +214,7 @@ export default function App() {
       await refreshAgents(false);
       await refreshSnapshots();
       await refreshDrives();
+      await refreshHistory(allHistory);
     }
   }
 
@@ -409,6 +433,16 @@ export default function App() {
               })
             }
           />
+
+          <HistoryCard
+            history={history}
+            showAll={allHistory}
+            onToggleAll={() => {
+              const next = !allHistory;
+              setAllHistory(next);
+              void refreshHistory(next);
+            }}
+          />
         </div>
 
         {/* 状态栏固定在底部（放在 .body 里面会跟着内容一起滚走） */}
@@ -581,6 +615,72 @@ function StatusCard({
           没有检测到这个 Agent 的数据目录。如果确实装了，可能是装在自定义位置 ——
           可以在 <code>%APPDATA%\AgentCache\agents.toml</code> 里补一条。
         </div>
+      )}
+    </Card>
+  );
+}
+
+/** 迁移历史卡片 —— 每次 run（无论成败）都记一条，事后能查账。 */
+function HistoryCard({
+  history,
+  showAll,
+  onToggleAll,
+}: {
+  history: {
+    items: {
+      ts: string;
+      agent: string;
+      src: string;
+      dest: string;
+      ok: boolean;
+      error?: string | null;
+      rolledBack?: boolean;
+      snapshot?: string | null;
+    }[];
+    path: string;
+  } | null;
+  showAll: boolean;
+  onToggleAll: () => void;
+}) {
+  const items = history?.items ?? [];
+  return (
+    <Card
+      title="迁移历史"
+      sub="何时对哪个目录做过什么（含失败的）"
+    >
+      {items.length === 0 ? (
+        <div style={{ color: "var(--muted)", fontSize: 12.5 }}>
+          还没有记录 —— 每次迁移（含失败的）都会自动记到这里。
+        </div>
+      ) : (
+        <>
+          <div className="rows">
+            {items.map((it, i) => (
+              <div key={`${it.ts}-${i}`} style={{ marginBottom: 6, fontSize: 12.5 }}>
+                <span className={it.ok ? "badge b-ok" : "badge b-danger"}>
+                  {it.ok ? "成功" : "失败"}
+                </span>{" "}
+                <span style={{ color: "var(--muted)" }}>{it.ts}</span>{" "}
+                <span className="mono">{it.agent}</span>
+                <div className="mono" style={{ opacity: 0.8, marginTop: 2 }}>
+                  {it.src} → {it.dest}
+                </div>
+                {it.error && (
+                  <div style={{ color: "#b91c1c", marginTop: 2 }}>
+                    {it.error}
+                    {it.rolledBack && "（已自动回滚）"}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <button className="btn" style={{ marginTop: 8 }} onClick={onToggleAll}>
+            {showAll ? "只看最近 15 条" : "查看全部"}
+          </button>
+          <div style={{ color: "var(--muted)", fontSize: 11.5, marginTop: 8 }} className="mono">
+            {history?.path}
+          </div>
+        </>
       )}
     </Card>
   );

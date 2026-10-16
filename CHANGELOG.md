@@ -2,6 +2,13 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.5.0] - 2026-10-17
+
+### 新增
+
+- **目标卷文件系统检查**：计划阶段读取目标卷的文件系统（Windows `GetVolumeInformationW`），**非 NTFS 一律拦下**（blocker）—— exFAT/FAT32 无法保留属性与 ACL（robocopy /COPY:DAT 会失败），FAT32 还有 4GB 单文件上限。同类工具（OPTOPIA、DriveKeeper）也都强制 NTFS。unix 无对应概念，跳过检查。
+- **界面新增「迁移历史」卡片**：`history.jsonl` 落盘的数据在界面上可见了 —— 每次迁移（含失败的）何时、对哪个目录、结果如何；支持展开全部。
+
 ## [0.4.0] - 2026-10-17
 
 ### 新增

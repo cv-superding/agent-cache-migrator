@@ -195,6 +195,33 @@ async fn snapshots() -> Result<Vec<migrate::Snapshot>, String> {
     .map_err(|e| format!("列快照异常：{e}"))?
 }
 
+/// 迁移历史（`history.jsonl`，新的在前；默认最近 15 条）。
+#[tauri::command]
+async fn history(all: Option<bool>) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = migrate::history_path().ok_or("定位不了历史文件（缺少用户配置目录）")?;
+        let mut items: Vec<Value> = if p.exists() {
+            let text = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
+            text.lines()
+                .filter(|l| !l.trim().is_empty())
+                .filter_map(|l| serde_json::from_str(l).ok())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        items.reverse(); // 新的在前
+        if !all.unwrap_or(false) {
+            items.truncate(15);
+        }
+        Ok(serde_json::json!({
+            "items": items,
+            "path": p.to_string_lossy(),
+        }))
+    })
+    .await
+    .map_err(|e| format!("读历史异常：{e}"))?
+}
+
 /// 删除一个快照。
 ///
 /// `permanent` 必须显式为 true —— 删掉就不能回滚了，这个选择必须由用户做出。
@@ -292,6 +319,7 @@ pub fn run() {
             rollback,
             repair,
             snapshots,
+            history,
             delete_snapshot,
             open_path,
             version,

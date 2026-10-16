@@ -139,6 +139,54 @@ pub struct Plan {
     pub skip: Vec<String>,
 }
 
+/// 目标卷的文件系统名（如 `NTFS`、`exFAT`）。
+///
+/// unix 没有对应概念（ext4/APFS 都支持属性复制），返回 None、调用方跳过检查。
+#[cfg(windows)]
+pub fn volume_fs(root: &Path) -> Option<String> {
+    use windows_sys::Win32::Storage::FileSystem::GetVolumeInformationW;
+
+    // GetVolumeInformationW 要求传卷根（`X:\`）。
+    // 🔴 归一化（实测三种形态都要处理）：
+    //    `C:`（SystemDrive 常见形态，没有反斜杠）→ `C:\`
+    //    `C:\Users\...\Temp`（完整路径）→ `C:\`；`C:\` 保持
+    //    宽字符串必须 NUL 结尾（漏掉这个 GetVolumeInformationW 会静默失败）。
+    let s = root.to_string_lossy().replace('/', "\\");
+    let s = if s.len() == 2 && s.as_bytes().get(1) == Some(&b':') {
+        format!("{s}\\")
+    } else {
+        s
+    };
+    let i = s.find(":\\")?;
+    let root_s = format!("{}\\", &s[..i + 1]); // `C:` / `C:\xxx` → `C:\`
+    let mut wide: Vec<u16> = root_s.encode_utf16().collect();
+    wide.push(0);
+    let mut fs_name = [0u16; 64];
+    let ok = unsafe {
+        GetVolumeInformationW(
+            wide.as_ptr(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            fs_name.as_mut_ptr(),
+            fs_name.len() as u32,
+        )
+    };
+    if ok == 0 {
+        return None;
+    }
+    let end = fs_name.iter().position(|&c| c == 0).unwrap_or(0);
+    Some(String::from_utf16_lossy(&fs_name[..end]))
+}
+
+/// 见 Windows 版说明。
+#[cfg(not(windows))]
+pub fn volume_fs(_root: &Path) -> Option<String> {
+    None
+}
+
 /// 生成计划。
 ///
 /// `dest_root` 是「目标根目录」（会拼上 agent id 作为子目录），不是最终目录本身。
@@ -175,6 +223,19 @@ pub fn plan(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<Plan, String
 
     let mut blockers = Vec::new();
     let mut warnings = Vec::new();
+
+    // ⓪ 目标卷文件系统：非 NTFS 一律拦下（Windows）
+    // exFAT/FAT32 不支持 NTFS 属性与 ACL —— robocopy /COPY:DAT 会失败，
+    // FAT32 还有 4GB 单文件上限。同类工具（OPTOPIA、DriveKeeper）也都强制 NTFS。
+    #[cfg(windows)]
+    if let Some(fs) = volume_fs(dest_root) {
+        if !fs.eq_ignore_ascii_case("NTFS") {
+            blockers.push(format!(
+                "目标卷文件系统是 {fs}，不是 NTFS —— 属性/权限无法保留\
+                 （FAT32 还有 4GB 单文件上限），复制会失败。请选一块 NTFS 格式的盘"
+            ));
+        }
+    }
 
     // ① 谁锁着源目录（精确判断，比按进程名猜可靠）
     let (holders, locks_ok) = crate::locks::holders_ex_dir(src, 400);
@@ -2167,6 +2228,17 @@ processes = []
         assert!(!rescue.join("same.txt").exists(), "未变更的文件不该被复制");
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn system_volume_is_ntfs() {
+        // 系统盘在 Windows 上必然是 NTFS —— 这个断言在 CI 的 windows runner 上也成立
+        let fs = volume_fs(Path::new(
+            &std::env::var("SystemDrive").unwrap_or("C:\\".into()),
+        ))
+        .expect("应当能读到系统盘的文件系统");
+        assert_eq!(fs.to_ascii_uppercase(), "NTFS");
     }
 
     #[test]
