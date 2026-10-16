@@ -95,6 +95,19 @@ pub struct Snapshot {
     pub measure: fsutil::Measure,
 }
 
+/// 修复结果。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepairReport {
+    pub ok: bool,
+    pub agent_id: String,
+    pub src: String,
+    pub dest: String,
+    /// `rebuilt`（坏链接删掉重建）| `created`（链接缺失直接建）| `noop`（本来就是好的）
+    pub action: String,
+    pub detail: String,
+}
+
 // ============================================================ 计划
 
 /// 迁移计划：动手前把「会发生什么、有什么拦路虎」摊开给用户看。
@@ -438,6 +451,11 @@ pub fn run(plan: &Plan, cb: &mut dyn FnMut(Progress)) -> MigrateReport {
 /// 回滚：把某个 agent 的快照改回原位（联接必须先摘掉）。
 ///
 /// 只处理**最新**的一个快照 —— 同名多个快照说明状态已经不干净，交给人判断。
+///
+/// 🔴 **回滚安全**（借鉴 OPTOPIA/appdata-migrate-tool）：迁移之后应用可能
+/// 往联接目标里写了新数据，直接摘链接改回快照会**丢掉这些数据**。
+/// 所以摘链接前先把「快照里没有的或大小不同的」文件复制到目标盘旁的
+/// `<名字>.rescued-<时间戳>` 恢复目录 —— 回滚零丢失。
 pub fn rollback(def: &AgentDef, src: &Path) -> Result<String, String> {
     let snaps = snapshots_of(src);
     let Some((snap, _ts)) = snaps.into_iter().next() else {
@@ -453,16 +471,202 @@ pub fn rollback(def: &AgentDef, src: &Path) -> Result<String, String> {
             src.display()
         ));
     }
+
+    let mut rescued = String::new();
     if fsutil::is_link(src) {
+        // 迁移后新数据在联接目标里 —— 摘链接前先抢救
+        if let Some(target) = fsutil::link_target(src).filter(|t| t.is_dir()) {
+            let ts = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+            let name = target
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "data".to_string());
+            let rescue = target.with_file_name(format!("{name}.rescued-{ts}"));
+            match rescue_changed_files(&target, &snap, &rescue) {
+                Ok((n, bytes)) if n > 0 => {
+                    rescued = format!(
+                        "；⚠ 迁移后新增/变更的 {} 个文件（{}）已先备份到 {}",
+                        n,
+                        fsutil::human(bytes),
+                        rescue.display()
+                    );
+                }
+                Ok(_) => {} // 没有新数据，直接回滚
+                Err(e) => {
+                    return Err(format!(
+                        "备份迁移后新增数据失败，已中止回滚（快照与链接都未动）：{e}"
+                    ))
+                }
+            }
+        }
         imp::remove_junction(src)?;
     }
     imp::rename_back(&snap, src)?;
     Ok(format!(
-        "已回滚：{} → {}（agent {}）",
+        "已回滚：{} → {}（agent {}）{}",
         snap.display(),
         src.display(),
-        def.id
+        def.id,
+        rescued
     ))
+}
+
+/// 把「迁移后新增/变更」的文件从 `target` 复制到 `rescue_dir`。
+///
+/// 判据（相对 `target` 的路径）：快照里**不存在**，或**大小不同**。
+/// 大小相同视为未改 —— 与迁移校验的收敛判据一致（应用已退出的前提下成立）。
+/// 返回 (文件数, 字节数)。**不改 target 本身** —— 只复制。
+fn rescue_changed_files(
+    target: &Path,
+    snapshot: &Path,
+    rescue_dir: &Path,
+) -> Result<(u64, u64), String> {
+    let mut files = 0u64;
+    let mut bytes = 0u64;
+    let mut stack = vec![target.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let rd = std::fs::read_dir(&dir).map_err(|e| format!("读 {} 失败：{e}", dir.display()))?;
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if fsutil::is_link(&p) {
+                continue; // 不跟随
+            }
+            let Ok(md) = entry.metadata() else { continue };
+            if md.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            let Ok(rel) = p.strip_prefix(target) else {
+                continue;
+            };
+            let snap_file = snapshot.join(rel);
+            let changed = match std::fs::symlink_metadata(&snap_file) {
+                Ok(s) => s.len() != md.len(),
+                Err(_) => true, // 快照里没有 = 新增
+            };
+            if !changed {
+                continue;
+            }
+            let to = rescue_dir.join(rel);
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("建 {} 失败：{e}", parent.display()))?;
+            }
+            std::fs::copy(&p, &to).map_err(|e| format!("复制 {} 失败：{e}", p.display()))?;
+            files += 1;
+            bytes += md.len();
+        }
+    }
+    Ok((files, bytes))
+}
+
+/// 修复模式：目标数据还在、只是链接坏了/丢了时，**只重建链接，不复制数据**。
+///
+/// 三种场景：
+/// - `rebuilt` —— 链接还在但断链（目标被挪走后换过位置）→ 删掉重建到 `dest_root/<id>`
+/// - `created` —— 链接整个没了（被清理工具误删）→ 直接建
+/// - `noop` —— 链接完好，什么都不做
+///
+/// 防御：候选目标必须是**有内容的真实目录**（防止把空目录/另一个链接当数据）；
+/// 应用在跑时拒绝修复（重建瞬间句柄会断）。
+pub fn repair(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<RepairReport, String> {
+    let dest = dest_root.join(&def.id);
+    let mk = |action: &str, detail: String| RepairReport {
+        ok: true,
+        agent_id: def.id.clone(),
+        src: src.to_string_lossy().to_string(),
+        dest: dest.to_string_lossy().to_string(),
+        action: action.to_string(),
+        detail,
+    };
+
+    // 应用在跑就不动 —— 重建的那一瞬间它手里的句柄会失效
+    let running = crate::procs::running_matching(&def.processes);
+    if !running.is_empty() {
+        return Err(format!(
+            "请先退出：{}（修复前不能有进程占用）",
+            running.join(", ")
+        ));
+    }
+
+    // 候选目标：必须是有内容的真实目录
+    let dest_kind = fsutil::classify(&dest);
+    let dest_files = std::fs::read_dir(&dest)
+        .map(|rd| rd.flatten().count())
+        .unwrap_or(0);
+    let dest_ok = matches!(dest_kind, fsutil::EntryKind::Dir) && dest_files > 0;
+    if !dest_ok {
+        return Err(format!(
+            "候选目标 {} 不存在、是空的、或不是真实目录 —— 数据不在预期位置，\
+             无法自动修复。请先确认目标盘上的数据还在（例如手工打开看看），\
+             再用正确的 --dest 重试",
+            dest.display()
+        ));
+    }
+
+    let kind = fsutil::classify(src);
+    match &kind {
+        // 真实目录/文件不是修复对象 —— 那是「迁移」的事
+        fsutil::EntryKind::Dir | fsutil::EntryKind::File => Err(format!(
+            "{} 是真实{}，不需要修复；要把数据搬到别的盘请走迁移流程",
+            src.display(),
+            if matches!(kind, fsutil::EntryKind::Dir) {
+                "目录"
+            } else {
+                "文件"
+            }
+        )),
+        // 链接完好 → 检查指向对不对
+        fsutil::EntryKind::Link {
+            broken: false,
+            target,
+        } => {
+            // 🔴 必须精确指向 dest：指向 dest 的子路径也算「不在预期位置」
+            let points_right = target.as_ref().map(|t| t == &dest).unwrap_or(false);
+            if points_right {
+                Ok(mk(
+                    "noop",
+                    format!("链接完好：{} → {}", src.display(), dest.display()),
+                ))
+            } else {
+                // 指向别处且能用 —— 不擅自改；如实说明
+                Err(format!(
+                    "链接完好但指向 {}（不是 {}）—— 数据可能在另一个位置，\
+                     确认后请手工处理，修错位置比不修更糟",
+                    target
+                        .as_ref()
+                        .map(|t| t.to_string_lossy())
+                        .unwrap_or_default(),
+                    dest.display()
+                ))
+            }
+        }
+        // 断链 → 删掉重建
+        fsutil::EntryKind::Link { broken: true, .. } => {
+            imp::remove_junction(src)?;
+            imp::make_junction(src, &dest)?;
+            let n = imp::verify_through_link(src, &dest)?;
+            Ok(mk(
+                "rebuilt",
+                format!("坏链接已重建，穿过链接读到 {n} 个条目"),
+            ))
+        }
+        // 链接整个没了 → 直接建（src 的父目录必须还在）
+        fsutil::EntryKind::Missing => {
+            if !src.parent().is_some_and(|p| p.exists()) {
+                return Err(format!(
+                    "{} 的父目录不存在 —— 路径本身有问题，无法自动修复",
+                    src.display()
+                ));
+            }
+            imp::make_junction(src, &dest)?;
+            let n = imp::verify_through_link(src, &dest)?;
+            Ok(mk(
+                "created",
+                format!("链接已创建，穿过链接读到 {n} 个条目"),
+            ))
+        }
+    }
 }
 
 /// 列出所有 agent 的快照。
@@ -1761,6 +1965,100 @@ paths = ["~/.nonexistent-agent-xyz"]
         // ❌ 名字前缀对不上（前缀相同但不是同一个数据目录）
         let imposter = parent.join(".codex2.moved-20261008-221500");
         assert!(validate_snapshot_path(&imposter, &defs).is_err());
+    }
+
+    /// 修复模式全场景：断链重建 / noop / 链接缺失直建 / 真实目录拒绝。
+    /// 跨平台 —— Windows 建联接、unix 建符号链接，走的都是各自的 imp。
+    #[test]
+    fn repair_rebuilds_broken_link_and_creates_missing() {
+        let base = std::env::temp_dir().join(format!("acm-repair-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let dest_root = base.join("AgentCache");
+        let dest = dest_root.join("codex");
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(dest.join("data.bin"), vec![1u8; 128]).unwrap();
+
+        let defs = crate::agents::parse(
+            r#"
+schema_version = 1
+[[agent]]
+id = "codex"
+name = "Codex"
+paths = ["~/.codex"]
+processes = []
+"#,
+        )
+        .unwrap();
+        let def = &defs[0];
+        let src = base.join(".codex");
+
+        // ① 断链（指向不存在的旧位置）→ rebuilt
+        imp::make_junction(&src, &base.join("old-gone")).unwrap();
+        let rep = repair(def, &src, &dest_root).unwrap();
+        assert_eq!(rep.action, "rebuilt", "断链应当被重建");
+        assert!(src.join("data.bin").exists(), "穿过重建的链接要能读到数据");
+
+        // ② 链接完好且指向正确 → noop
+        let rep2 = repair(def, &src, &dest_root).unwrap();
+        assert_eq!(rep2.action, "noop");
+
+        // ③ 链接整个没了 → created
+        imp::remove_junction(&src).unwrap();
+        assert!(!src.exists());
+        let rep3 = repair(def, &src, &dest_root).unwrap();
+        assert_eq!(rep3.action, "created");
+        assert!(src.join("data.bin").exists());
+
+        // ④ 真实目录 → 拒绝（那是迁移的事）
+        let real = base.join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        assert!(repair(def, &real, &dest_root).is_err());
+
+        // ⑤ 链接指向别处且能用 → 拒绝擅改（修错位置比不修更糟）
+        let elsewhere = base.join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("o.bin"), b"o").unwrap();
+        let _ = imp::remove_junction(&src);
+        imp::make_junction(&src, &elsewhere).unwrap();
+        assert!(repair(def, &src, &dest_root).is_err());
+
+        // ⑥ 候选目标为空 → 拒绝
+        let empty_root = base.join("Empty");
+        std::fs::create_dir_all(empty_root.join("codex")).unwrap();
+        let _ = imp::remove_junction(&src);
+        assert!(repair(def, &src, &empty_root).is_err());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 回滚前的数据抢救：只搬「快照里没有的或大小不同的」，相同的跳过。
+    #[test]
+    fn rescue_copies_only_new_or_changed_files() {
+        let base = std::env::temp_dir().join(format!("acm-rescue-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let snap = base.join("snap");
+        let target = base.join("target");
+        std::fs::create_dir_all(snap.join("newdir")).unwrap();
+        std::fs::create_dir_all(target.join("newdir")).unwrap();
+
+        std::fs::write(snap.join("same.txt"), vec![1u8; 100]).unwrap();
+        std::fs::write(target.join("same.txt"), vec![1u8; 100]).unwrap(); // 一致 → 跳过
+        std::fs::write(snap.join("old.txt"), vec![1u8; 50]).unwrap();
+        std::fs::write(target.join("old.txt"), vec![1u8; 60]).unwrap(); // 改过 → 抢救
+        std::fs::write(target.join("new.txt"), b"new").unwrap(); // 新增 → 抢救
+        std::fs::write(target.join("newdir/nested.bin"), vec![2u8; 30]).unwrap(); // 新增嵌套 → 抢救
+
+        let rescue = base.join("rescued");
+        let (n, bytes) = rescue_changed_files(&target, &snap, &rescue).unwrap();
+        assert_eq!(n, 3);
+        assert_eq!(bytes, 60 + 3 + 30);
+        assert!(rescue.join("old.txt").exists());
+        assert!(rescue.join("new.txt").exists());
+        assert!(rescue.join("newdir/nested.bin").exists());
+        assert!(!rescue.join("same.txt").exists(), "未变更的文件不该被复制");
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

@@ -15,7 +15,8 @@ acm —— AgentCache 命令行
   acm list                   列出注册表里的 Agent（不检测）
   acm plan <id> [--dest <根>]  为某个 Agent 生成迁移计划（**不动任何文件**）
   acm migrate <id> [选项]    执行迁移（复制 → 校验 → 快照 → 联接，失败自动回滚）
-  acm rollback <id> [--yes]  回滚：把快照改回原位（联接必须先摘掉）
+  acm rollback <id> [--yes]  回滚：把快照改回原位（迁移后新数据会先备份到恢复目录）
+  acm repair <id> [选项]     修复：目标数据还在但链接坏了/丢了，只重建链接不复制数据
   acm snapshots              列出所有迁移快照（原目录改名保留的那份）
   acm drives                 列出盘符与剩余空间
   acm help                   显示这段帮助
@@ -39,6 +40,11 @@ migrate 选项:
 rollback 选项:
   --yes                  跳过交互确认
   --config <路径>        同上
+
+repair 选项:
+  --dest <根目录>        数据所在的根（会拼上 agent id 作为子目录）；不给他们会自动挑
+  --yes                  跳过交互确认
+  --config <路径>        同上
 ";
 
 fn main() -> ExitCode {
@@ -51,6 +57,7 @@ fn main() -> ExitCode {
         "plan" => cmd_plan(&args[1..]),
         "migrate" => cmd_migrate(&args[1..]),
         "rollback" => cmd_rollback(&args[1..]),
+        "repair" => cmd_repair(&args[1..]),
         "snapshots" => cmd_snapshots(&args[1..]),
         "drives" => cmd_drives(),
         "help" | "-h" | "--help" => {
@@ -433,6 +440,36 @@ fn cmd_rollback(args: &[String]) -> Result<(), String> {
     }
     let msg = migrate::rollback(&def, &src)?;
     println!("✅ {msg}");
+    Ok(())
+}
+
+fn cmd_repair(args: &[String]) -> Result<(), String> {
+    let usage = "用法：acm repair <agent-id> [--dest <数据所在的根>] [--yes] [--config <路径>]";
+    let yes = args.iter().any(|a| a == "--yes");
+    let (def, src) = resolve_target(args, usage)?;
+
+    let dest_root = match flag_path(args, "--dest") {
+        Some(d) => d,
+        None => migrate::default_dest_root()
+            .ok_or("没能自动挑出目标盘（可能只有一个盘），请用 --dest 指定数据所在的根")?,
+    };
+
+    if !confirm(
+        &format!(
+            "修复 {} 的链接？（{}，只重建链接不动数据）",
+            src.display(),
+            def.name
+        ),
+        yes,
+    )? {
+        println!("已取消。");
+        return Ok(());
+    }
+    let rep = migrate::repair(&def, &src, &dest_root)?;
+    println!("✅ [{}] {}", rep.action, rep.detail);
+    if rep.action != "noop" {
+        println!("   {} → {}", rep.src, rep.dest);
+    }
     Ok(())
 }
 

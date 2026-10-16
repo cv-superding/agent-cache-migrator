@@ -71,6 +71,24 @@ export function rollback(agentId: string): Promise<string> {
   return invoke("rollback", { agentId });
 }
 
+/** 修复模式：目标数据还在但链接坏了/丢了，只重建链接不复制数据。 */
+export function repair(
+  agentId: string,
+  destRoot: string,
+): Promise<import("./types").RepairReport> {
+  if (DEMO) {
+    return Promise.resolve({
+      ok: true,
+      agentId,
+      src: "C:\\demo\\.agent",
+      dest: "D:\\AgentCache\\.agent",
+      action: "rebuilt",
+      detail: "（演示）坏链接已重建，穿过链接读到 3 个条目",
+    });
+  }
+  return invoke("repair", { agentId, destRoot });
+}
+
 export function snapshots(): Promise<Snapshot[]> {
   if (DEMO) return Promise.resolve(demoData.SNAPSHOTS);
   return invoke("snapshots");
@@ -123,6 +141,7 @@ export const api = {
   plan,
   migrateAgent,
   rollback,
+  repair,
   snapshots,
   deleteSnapshot,
   openPath,

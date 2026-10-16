@@ -60,6 +60,7 @@ export default function App() {
   const [report, setReport] = useState<MigrateReport | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [rolling, setRolling] = useState(false);
+  const [repairing, setRepairing] = useState(false);
 
   // ---- 界面
   const [scanning, setScanning] = useState(true);
@@ -221,6 +222,21 @@ export default function App() {
     }
   }
 
+  /** 修复模式：目标数据还在但链接坏了/丢了，只重建链接不复制数据。 */
+  async function doRepair(id: string) {
+    setRepairing(true);
+    try {
+      const root = destRoot || drives?.defaultDestRoot || "";
+      const r = await api.repair(id, root);
+      toast("修复完成", `[${r.action}] ${r.detail}`);
+      await refreshAgents(false);
+    } catch (e) {
+      toast("修复失败", String(e), true);
+    } finally {
+      setRepairing(false);
+    }
+  }
+
   // ---------------------------------------------------------------- 渲染
 
   const detected = agents.filter((a) => a.detected);
@@ -270,7 +286,25 @@ export default function App() {
 
           {cur && (
             <>
-              <StatusCard a={cur} />
+              <StatusCard
+                a={cur}
+                repairing={repairing}
+                onRepair={(id) => {
+                  const a = agents.find((x) => x.id === id);
+                  setConfirm({
+                    title: "修复链接？",
+                    okText: "修复",
+                    body: (
+                      <>
+                        会把 <span className="mono">{a?.name ?? id}</span> 的坏链接删掉，
+                        重新指向 <span className="mono">{destRoot || "目标位置"}</span> 下的数据目录。
+                        <b>只重建链接，不动任何数据</b>，修复前请先退出该应用。
+                      </>
+                    ),
+                    onOk: () => void doRepair(id),
+                  });
+                }}
+              />
               <DestCard
                 drives={drives}
                 destRoot={destRoot}
@@ -445,7 +479,15 @@ function classHint(c: string): string {
 }
 
 /** 当前状态卡片。 */
-function StatusCard({ a }: { a: DetectedAgent }) {
+function StatusCard({
+  a,
+  onRepair,
+  repairing,
+}: {
+  a: DetectedAgent;
+  onRepair?: (id: string) => void;
+  repairing?: boolean;
+}) {
   const st = agentState(a);
   const shown = a.paths.filter((p) => p.kind !== "missing");
 
@@ -521,6 +563,17 @@ function StatusCard({ a }: { a: DetectedAgent }) {
         <div className="note ok" style={{ marginTop: 11 }}>
           已经迁移过了 —— 数据在目标盘，应用通过联接无感读写。
           <b>设置页里显示的仍是原路径，这是正常的</b>（联接对应用透明）。
+        </div>
+      )}
+      {a.brokenLinks.length > 0 && onRepair && (
+        <div style={{ marginTop: 11 }}>
+          <div className="note danger" style={{ marginBottom: 8 }}>
+            检测到 {a.brokenLinks.length} 个断链联接 —— 应用「解压到临时名再改名」的
+            准备工作会<b>永久失败</b>，每次启动都重做一遍。如果数据还在目标位置，可以一键重建。
+          </div>
+          <button className="btn pri" disabled={repairing} onClick={() => onRepair(a.id)}>
+            {repairing ? "修复中…" : "修复链接（不动数据）"}
+          </button>
         </div>
       )}
       {st === "absent" && (

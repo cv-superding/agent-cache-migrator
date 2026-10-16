@@ -156,6 +156,34 @@ async fn rollback(agent_id: String) -> Result<String, String> {
     .map_err(|e| format!("回滚任务异常：{e}"))?
 }
 
+/// 修复模式：目标数据还在但链接坏了/丢了，只重建链接不复制数据。
+///
+/// ⚠️ 与 `resolve` 不同：src 可能是一个**断链**（`exists()` 为 false），
+/// 也可能整个没了（父目录还在就行），所以解析规则放宽到 symlink/父目录。
+#[tauri::command]
+async fn repair(agent_id: String, dest_root: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let defs = agents::load(None)?;
+        let def = defs
+            .iter()
+            .find(|d| d.id == agent_id)
+            .ok_or_else(|| format!("注册表里没有 id = {agent_id}"))?;
+        let src = def
+            .paths
+            .iter()
+            .find_map(|tpl| {
+                paths::expand(tpl).filter(|p| {
+                    p.symlink_metadata().is_ok() || p.parent().is_some_and(|pp| pp.exists())
+                })
+            })
+            .ok_or_else(|| format!("{} 的数据路径连父目录都不存在，无法修复", def.name))?;
+        let rep = migrate::repair(def, &src, Path::new(&dest_root))?;
+        serde_json::to_value(rep).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("修复任务异常：{e}"))?
+}
+
 /// 列出所有迁移快照。
 #[tauri::command]
 async fn snapshots() -> Result<Vec<migrate::Snapshot>, String> {
@@ -262,6 +290,7 @@ pub fn run() {
             plan,
             migrate_agent,
             rollback,
+            repair,
             snapshots,
             delete_snapshot,
             open_path,

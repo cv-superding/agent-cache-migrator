@@ -104,6 +104,16 @@ export interface StepResult {
   detail: string;
 }
 
+export interface RepairReport {
+  ok: boolean;
+  agentId: string;
+  src: string;
+  dest: string;
+  /** rebuilt（坏链接删掉重建）| created（链接缺失直接建）| noop（本来就是好的） */
+  action: "rebuilt" | "created" | "noop" | string;
+  detail: string;
+}
+
 export interface Progress {
   /** copying | verifying | snapshotting | linking | verifying-link | done */
   step: string;
