@@ -130,6 +130,10 @@ pub struct Plan {
     pub warnings: Vec<String>,
     /// 预计目标最终体积是否够放
     pub fits: bool,
+    /** ≥1GB 的大文件数（帮助预估复制耗时；扫描被上限截断时是下限） */
+    pub large_files: u64,
+    /// 大文件扫描是否被上限截断
+    pub large_files_capped: bool,
     /// 校验阶段跳过的 glob（来自 `agents.toml` 的 `skip` 字段）。
     /// 复制仍会全量复制；只是这些条目**不参与「0 差异」收敛判定**。
     pub skip: Vec<String>,
@@ -226,6 +230,31 @@ pub fn plan(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<Plan, String
             env.env
         ));
     }
+    // 多目录 Agent：本函数一次只迁一个目录，GUI 只挑主目录 —— 如实告知还有别的
+    let other_paths = def
+        .paths
+        .iter()
+        .filter_map(|tpl| paths::expand(tpl))
+        .filter(|p| p != src && p.exists() && !fsutil::is_link(p))
+        .count();
+    if other_paths > 0 {
+        warnings.push(format!(
+            "该 Agent 还声明了 {other_paths} 个数据目录，本次只迁这一个；\
+             其余目录可用 acm migrate <id> 逐个处理"
+        ));
+    }
+
+    // ≥1GB 的大文件数 —— 用户据此预估复制耗时（几个大文件 ≠ 几十万小文件）
+    const LARGE: u64 = 1024 * 1024 * 1024;
+    let (large_files, large_capped) =
+        count_large_files(src, LARGE, 300_000, std::time::Duration::from_secs(15));
+    if large_files > 0 {
+        warnings.push(format!(
+            "有 {} 个 ≥1GB 的大文件{} —— 大文件按顺序复制，比同体积的小文件快得多",
+            large_files,
+            if large_capped { "（下限）" } else { "" }
+        ));
+    }
 
     Ok(Plan {
         agent_id: def.id.clone(),
@@ -239,8 +268,44 @@ pub fn plan(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<Plan, String
         blockers,
         warnings,
         fits,
+        large_files,
+        large_files_capped: large_capped,
         skip: def.skip.clone(),
     })
+}
+
+/// 统计 ≥ `threshold` 字节的大文件数。不跟随重解析点；达到上限就停（如实标记）。
+fn count_large_files(
+    root: &Path,
+    threshold: u64,
+    cap_files: u64,
+    cap: std::time::Duration,
+) -> (u64, bool) {
+    let started = std::time::Instant::now();
+    let mut n = 0u64;
+    let mut scanned = 0u64;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in rd.flatten() {
+            let Ok(md) = entry.metadata() else { continue };
+            if fsutil::is_link(&entry.path()) {
+                continue; // 不跟进去
+            }
+            scanned += 1;
+            if scanned > cap_files || started.elapsed() > cap {
+                return (n, true);
+            }
+            if md.is_dir() {
+                stack.push(entry.path());
+            } else if md.len() >= threshold {
+                n += 1;
+            }
+        }
+    }
+    (n, false)
 }
 
 /// 默认目标根：剩余空间最大的非系统盘下的 `AgentCache\`。
@@ -274,7 +339,50 @@ pub fn default_dest_root() -> Option<PathBuf> {
 ///
 /// 五步，任何一步失败都会**尽力回滚**（把快照改回原名、删掉半成品联接），
 /// 并且如实报告。回滚也失败时 `rolled_back = false`，用户按快照名手工处理。
+///
+/// 每次执行（无论成败）都会追加一条记录到 `%APPDATA%/AgentCache/history.jsonl`
+/// —— 迁移是有副作用的操作，事后要能回答「什么时候对哪个目录做过什么」
+/// （借鉴 OPTOPIA 的迁移状态清单）。写入失败不影响迁移本身。
 pub fn run(plan: &Plan, cb: &mut dyn FnMut(Progress)) -> MigrateReport {
+    let rep = run_inner(plan, cb);
+    append_history(&rep, &plan.agent_id);
+    rep
+}
+
+/// 历史记录文件：`%APPDATA%/AgentCache/history.jsonl`，每行一条 JSON。
+pub fn history_path() -> Option<PathBuf> {
+    crate::paths::roaming_dir().map(|d| d.join("AgentCache").join("history.jsonl"))
+}
+
+fn append_history(rep: &MigrateReport, agent_id: &str) {
+    let Some(p) = history_path() else { return };
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let line = serde_json::json!({
+        "ts": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
+        "agent": agent_id,
+        "src": rep.src,
+        "dest": rep.dest,
+        "ok": rep.ok,
+        "error": rep.error,
+        "rolledBack": rep.rolled_back,
+        "snapshot": rep.snapshot,
+    });
+    let ok = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&p)
+        .and_then(|mut f| {
+            use std::io::Write;
+            writeln!(f, "{line}")
+        });
+    if let Err(e) = ok {
+        eprintln!("⚠ 历史记录写入失败（不影响迁移）：{e}");
+    }
+}
+
+fn run_inner(plan: &Plan, cb: &mut dyn FnMut(Progress)) -> MigrateReport {
     let src = PathBuf::from(&plan.src);
     let dest = PathBuf::from(&plan.dest);
     let mut r = MigrateReport::new(&src, &dest);
@@ -441,7 +549,7 @@ pub fn run(plan: &Plan, cb: &mut dyn FnMut(Progress)) -> MigrateReport {
 
     cb(Progress {
         step: "done".into(),
-        detail: "迁移完成".into(),
+        detail: "迁移完成 —— 重启应用后，新的写入会直接落到目标盘".into(),
         percent: Some(100),
     });
     r.ok = true;

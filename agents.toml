@@ -150,6 +150,17 @@ paths    = ["%APPDATA%/Doubao"]
 processes = ["Doubao.exe"]
 
 
+[[agent]]
+id       = "gemini-cli"
+name     = "Gemini CLI"
+vendor   = "Google"
+kind     = "cli"
+class    = "normal"
+paths    = ["~/.gemini"]
+processes = ["gemini*"]
+note     = "CLI 无常驻进程，但正在跑的会话会持续写。"
+
+
 # ───────────────────────────── 通用工具 ─────────────────────────────
 
 [[agent]]
@@ -169,6 +180,26 @@ class    = "normal"
 paths    = ["%APPDATA%/uTools"]
 updater  = ["utools-updater"]
 processes = ["uTools.exe"]
+
+
+[[agent]]
+id       = "windsurf"
+name     = "Windsurf"
+vendor   = "Codeium"
+kind     = "electron"
+class    = "normal"
+paths    = ["%APPDATA%/Windsurf"]
+processes = ["Windsurf.exe"]
+skip     = ["logs/**", "CachedData/**", "Code Cache/**", "GPUCache/**", "Crashpad/**"]
+
+[[agent]]
+id       = "lingma"
+name     = "通义灵码"
+vendor   = "阿里云"
+kind     = "generic"
+class    = "normal"
+paths    = ["~/.lingma"]
+processes = []
 
 
 # ───────────────────────────── 缓存类（class="safe"）示例 ─────────────────────────────

@@ -670,6 +670,12 @@ function DestCard(props: {
                 <div className="note ok" style={{ marginTop: 11 }}>
                   <b>可以迁移。</b>占用 {human(plan.srcMeasure.bytes)}，目标盘可用{" "}
                   {human(plan.destFree)}。
+                  {typeof plan.largeFiles === "number" && plan.largeFiles > 0 && (
+                    <>
+                      ；有 <b>{plan.largeFiles}</b> 个 ≥1GB 的大文件
+                      {plan.largeFilesCapped && "（下限）"} —— 大文件按顺序复制，比同体积小文件快得多。
+                    </>
+                  )}
                 </div>
               ) : (
                 <div className="note danger" style={{ marginTop: 11 }}>

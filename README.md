@@ -168,6 +168,9 @@ skip      = ["**/node_modules"]       # 可选：这些不进校验
 | DeepSeek | `%APPDATA%\@deepseek-ai` |
 | Cherry Studio | `%APPDATA%\CherryStudio` |
 | 豆包 | `%APPDATA%\Doubao` |
+| Windsurf | `%APPDATA%\Windsurf` |
+| 通义灵码 | `~/.lingma` |
+| Gemini CLI | `~/.gemini` |
 | uTools | `%APPDATA%\uTools` |
 | npm 缓存（`class=safe`） | `%LOCALAPPDATA%\npm-cache` · `~/.npm/_cacache` |
 
@@ -215,9 +218,11 @@ agent-cache-migrator/
 ```bash
 acm detect                 # 检测本机 Agent（--json 给脚本用）
 acm plan codex             # 生成迁移计划 —— **不动任何文件**
-acm migrate codex --dest D:\AgentCache --yes   # 执行迁移（失败自动回滚）
-acm rollback codex         # 回滚：快照改回原位
+acm migrate codex --dest D:\AgentCache --yes   # 执行迁移（多目录 Agent 逐个迁，失败即停）
+acm rollback codex         # 回滚：快照改回原位（迁移后新数据先备份到恢复目录）
+acm repair codex           # 修复：目标数据还在但链接坏了，只重建链接
 acm snapshots              # 列出迁移快照（可回滚的那份）
+acm history                # 迁移历史（何时对哪个目录做过什么）
 acm drives                 # 盘符 + 剩余空间 + 自动挑的目标根
 ```
 

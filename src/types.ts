@@ -96,6 +96,9 @@ export interface Plan {
   blockers: string[];
   warnings: string[];
   fits: boolean;
+  /** ≥1GB 的大文件数（用于预估复制耗时；undefined = 旧版后端） */
+  largeFiles?: number;
+  largeFilesCapped?: boolean;
 }
 
 export interface StepResult {

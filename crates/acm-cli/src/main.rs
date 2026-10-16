@@ -18,6 +18,7 @@ acm —— AgentCache 命令行
   acm rollback <id> [--yes]  回滚：把快照改回原位（迁移后新数据会先备份到恢复目录）
   acm repair <id> [选项]     修复：目标数据还在但链接坏了/丢了，只重建链接不复制数据
   acm snapshots              列出所有迁移快照（原目录改名保留的那份）
+  acm history [--all]        查看迁移历史（最近 20 条，--all 全部）
   acm drives                 列出盘符与剩余空间
   acm help                   显示这段帮助
 
@@ -59,6 +60,7 @@ fn main() -> ExitCode {
         "rollback" => cmd_rollback(&args[1..]),
         "repair" => cmd_repair(&args[1..]),
         "snapshots" => cmd_snapshots(&args[1..]),
+        "history" => cmd_history(&args[1..]),
         "drives" => cmd_drives(),
         "help" | "-h" | "--help" => {
             print!("{USAGE}");
@@ -297,6 +299,17 @@ fn print_plan(p: &migrate::Plan) {
             p.dest_existing.files
         );
     }
+    if p.large_files > 0 {
+        println!(
+            "  大文件　{} 个 ≥1GB{}",
+            p.large_files,
+            if p.large_files_capped {
+                "（下限）"
+            } else {
+                ""
+            }
+        );
+    }
     println!("  快照　{}<时间戳>", p.snapshot_prefix);
 
     if p.blockers.is_empty() {
@@ -353,29 +366,69 @@ fn cmd_migrate(args: &[String]) -> Result<(), String> {
     let usage = "用法：acm migrate <agent-id> [--dest <目标根目录>] [--yes] [--json]";
     let yes = args.iter().any(|a| a == "--yes");
     let json = args.iter().any(|a| a == "--json");
-    let (def, src) = resolve_target(args, usage)?;
+    let id = positional(args, usage)?;
+    let cfg = flag_path(args, "--config");
+    let defs = agents::load(cfg.as_deref())?;
+    let def = defs
+        .iter()
+        .find(|d| d.id == id)
+        .ok_or_else(|| format!("注册表里没有 id = {id}"))?;
+
+    // 🔴 Agent 可能声明多个数据目录（如 npm-cache 的两个缓存位置）——
+    // 只迁第一个会留下一半在 C 盘。这里逐个迁：任一失败立即停止，其余不动。
+    let targets: Vec<PathBuf> = def
+        .paths
+        .iter()
+        .filter_map(|tpl| paths::expand(tpl))
+        .filter(|p| p.exists() && !fsutil::is_link(p))
+        .collect();
+    if targets.is_empty() {
+        return Err(format!(
+            "{} 没有需要迁移的目录（都不存在或已是链接）",
+            def.name
+        ));
+    }
 
     let dest_root = match flag_path(args, "--dest") {
         Some(d) => d,
         None => migrate::default_dest_root()
             .ok_or("没能自动挑出目标盘（可能只有一个盘），请用 --dest 指定")?,
     };
-    let p = migrate::plan(&def, &src, &dest_root)?;
-    if !p.blockers.is_empty() {
-        return Err(format!("还不能迁移：{}", p.blockers.join("；")));
+
+    let mut plans = Vec::new();
+    for src in &targets {
+        let p = migrate::plan(def, src, &dest_root)?;
+        if !p.blockers.is_empty() {
+            return Err(format!("还不能迁移 {}：{}", p.src, p.blockers.join("；")));
+        }
+        plans.push(p);
     }
 
     if !json {
-        println!("【{}】{}", p.agent_id, p.agent_name);
-        println!("  源　　{}", p.src);
-        println!(
-            "  占用　{}（{} 文件）",
-            fsutil::human(p.src_measure.bytes),
-            p.src_measure.files
-        );
-        println!("  目标　{}", p.dest);
-        for w in &p.warnings {
-            println!("  ⚠ {w}");
+        for p in &plans {
+            println!("【{}】{}", p.agent_id, p.agent_name);
+            println!("  源　　{}", p.src);
+            println!(
+                "  占用　{}（{} 文件）",
+                fsutil::human(p.src_measure.bytes),
+                p.src_measure.files
+            );
+            println!("  目标　{}", p.dest);
+            if p.large_files > 0 {
+                println!(
+                    "  大文件　{} 个 ≥1GB{}",
+                    p.large_files,
+                    if p.large_files_capped {
+                        "（下限）"
+                    } else {
+                        ""
+                    }
+                );
+            }
+            for w in &p.warnings {
+                println!("  ⚠ {w}");
+            }
+            println!();
         }
     }
     if !confirm("确认执行迁移？", yes || json)? {
@@ -383,40 +436,56 @@ fn cmd_migrate(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
-    let rep = migrate::run(&p, &mut |pr| {
-        // 进度走 stderr：stdout 留给最终报告/JSON，方便管道
-        if !json {
-            let pct = pr.percent.map(|p| format!(" {p}%")).unwrap_or_default();
-            eprintln!("[{:>14}] {}{}", pr.step, pr.detail, pct);
+    let mut reports: Vec<migrate::MigrateReport> = Vec::new();
+    let mut any_failed = false;
+    for (i, p) in plans.iter().enumerate() {
+        if plans.len() > 1 && !json {
+            println!("\n── [{}/{}] {}", i + 1, plans.len(), p.src);
         }
-    });
+        let rep = migrate::run(p, &mut |pr| {
+            // 进度走 stderr：stdout 留给最终报告/JSON，方便管道
+            if !json {
+                let pct = pr.percent.map(|p| format!(" {p}%")).unwrap_or_default();
+                eprintln!("[{:>14}] {}{}", pr.step, pr.detail, pct);
+            }
+        });
+        let ok = rep.ok;
+        if json {
+            reports.push(rep.clone());
+        } else {
+            println!();
+            for s in &rep.steps {
+                println!(
+                    "{} {} —— {}",
+                    if s.ok { "✓" } else { "✗" },
+                    s.name,
+                    s.detail
+                );
+            }
+            if rep.ok {
+                println!("\n✅ 迁移完成：{} → {}", rep.src, rep.dest);
+                println!(
+                    "   （原目录保留在 {}；建议先启动应用确认正常，再清理快照）",
+                    rep.snapshot.as_deref().unwrap_or("?")
+                );
+            } else if let Some(e) = &rep.error {
+                eprintln!("\n✗ 迁移失败：{e}（自动回滚：{}）", rep.rolled_back);
+            }
+        }
+        reports.push(rep);
+        if !ok {
+            any_failed = true;
+            break; // 逐目录顺序迁：前一个失败，后面的原地不动
+        }
+    }
 
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&rep).map_err(|e| e.to_string())?
+            serde_json::to_string_pretty(&reports).map_err(|e| e.to_string())?
         );
-    } else {
-        println!();
-        for s in &rep.steps {
-            println!(
-                "{} {} —— {}",
-                if s.ok { "✓" } else { "✗" },
-                s.name,
-                s.detail
-            );
-        }
-        if rep.ok {
-            println!("\n✅ 迁移完成：{} → {}", rep.src, rep.dest);
-            println!(
-                "   （原目录保留在 {}，确认无误后可在界面/CLI 清理）",
-                rep.snapshot.as_deref().unwrap_or("?")
-            );
-        } else if let Some(e) = &rep.error {
-            eprintln!("\n✗ 迁移失败：{e}（自动回滚：{}）", rep.rolled_back);
-        }
     }
-    if !rep.ok {
+    if any_failed {
         return Err("迁移未成功".to_string());
     }
     Ok(())
@@ -514,6 +583,58 @@ fn cmd_snapshots(args: &[String]) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------- drives
+
+// ---------------------------------------------------------------- history
+
+/// 迁移历史：`%APPDATA%/AgentCache/history.jsonl`（core 在每次 run 后追加）。
+fn cmd_history(args: &[String]) -> Result<(), String> {
+    let all = args.iter().any(|a| a == "--all");
+    let json = args.iter().any(|a| a == "--json");
+    let Some(p) = migrate::history_path() else {
+        return Err("定位不了历史文件（缺少用户配置目录）".to_string());
+    };
+    if !p.exists() {
+        println!("还没有迁移历史（{}）", p.display());
+        return Ok(());
+    }
+    let text = std::fs::read_to_string(&p).map_err(|e| format!("读 {} 失败：{e}", p.display()))?;
+    let mut items: Vec<serde_json::Value> = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    items.reverse(); // 新的在前
+    if !all {
+        items.truncate(20);
+    }
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&items).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+
+    println!("迁移历史（最近 {} 条 / 文件 {}）", items.len(), p.display());
+    for it in &items {
+        let ts = it["ts"].as_str().unwrap_or("?");
+        let agent = it["agent"].as_str().unwrap_or("?");
+        let src = it["src"].as_str().unwrap_or("?");
+        let dest = it["dest"].as_str().unwrap_or("?");
+        let ok = it["ok"].as_bool().unwrap_or(false);
+        println!(
+            "{} {ts}  {agent:<14} {} → {}",
+            if ok { "✓" } else { "✗" },
+            src,
+            dest
+        );
+        if let Some(e) = it["error"].as_str() {
+            println!("      └ {e}");
+        }
+    }
+    Ok(())
+}
 
 fn cmd_drives() -> Result<(), String> {
     println!("盘符：");

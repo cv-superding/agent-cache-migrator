@@ -2,6 +2,16 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0] - 2026-10-17
+
+### 新增
+
+- **迁移历史落盘**：每次迁移（无论成败）追加一条到 `%APPDATA%/AgentCache/history.jsonl` —— 事后能回答「什么时候对哪个目录做过什么」（借鉴 OPTOPIA 的迁移状态清单）；CLI 新增 `acm history [--all] [--json]`。
+- **计划报告大文件统计**：plan 会列出 ≥1GB 的大文件数（借鉴 zhao-wuyan/directory-migration-tool 的 LargeFileThreshold）—— 帮助预估复制耗时（几个大文件 ≠ 几十万小文件）；CLI 与界面都展示。
+- **CLI migrate 支持多目录 Agent**：声明了多个数据目录的 Agent（如 npm-cache 的两个缓存位置）此前只迁第一个 —— 现在逐个迁移、任一失败立即停止。
+- **内置注册表新增 3 个 Agent**：Windsurf（`%APPDATA%\Windsurf`）、通义灵码（`~/.lingma`）、Gemini CLI（`~/.gemini`）。
+- 迁移完成的提示明确「重启应用后新写入会直接落到目标盘；确认正常后再清理快照」（借鉴 DriveKeeper 的 live-write 验证思想）。
+
 ## [0.3.0] - 2026-10-17
 
 ### 新增
