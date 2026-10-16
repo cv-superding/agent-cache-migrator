@@ -142,6 +142,7 @@ export function Confirm({
   title,
   okText,
   danger,
+  extra,
   onCancel,
   onOk,
   children,
@@ -149,6 +150,8 @@ export function Confirm({
   title: string;
   okText: string;
   danger?: boolean;
+  /** 次要动作（如「移入回收站」）—— 介于取消与主按钮之间 */
+  extra?: { text: string; onOk: () => void };
   onCancel: () => void;
   onOk: () => void;
   children: ReactNode;
@@ -191,6 +194,17 @@ export function Confirm({
           <button className="btn" onClick={onCancel}>
             取消
           </button>
+          {extra && (
+            <button
+              className="btn"
+              onClick={() => {
+                const f = extra.onOk;
+                f();
+              }}
+            >
+              {extra.text}
+            </button>
+          )}
           <button
             className="btn pri"
             onClick={onOk}

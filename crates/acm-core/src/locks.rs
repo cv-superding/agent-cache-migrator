@@ -37,13 +37,27 @@ impl Holder {
 /// 路径不存在的会被系统忽略，不报错 —— 调用方不必先过滤。
 #[cfg(windows)]
 pub fn holders(paths: &[PathBuf]) -> Vec<Holder> {
-    imp::holders(paths)
+    holders_ex(paths).0
 }
 
-/// 见 Windows 版说明。
+/// 同 [`holders`]，但额外回答「检测本身可不可用」。
+///
+/// 🔴 `false`（会话创建失败）时返回的空列表**不等于**「没有占用」——
+/// 调用方应当提示用户自行确认，而不是静默放行。这是「明确失败优于静默」的落点。
+#[cfg(windows)]
+pub fn holders_ex(paths: &[PathBuf]) -> (Vec<Holder>, bool) {
+    imp::holders_ex(paths)
+}
+
+/// 见 Windows 版说明。非 Windows 没有 Restart Manager：**恒不可用**。
 #[cfg(not(windows))]
-pub fn holders(_paths: &[PathBuf]) -> Vec<Holder> {
-    Vec::new()
+pub fn holders_ex(_paths: &[PathBuf]) -> (Vec<Holder>, bool) {
+    (Vec::new(), false)
+}
+
+/// 便利：探测目录（目录本身 + 一级子项）并回答检测可用性。
+pub fn holders_ex_dir(dir: &Path, max_entries: usize) -> (Vec<Holder>, bool) {
+    holders_ex(&probe_paths(dir, max_entries))
 }
 
 /// 构造探测用的路径集合：**目录本身 + 直接子项**，最多 `max_entries` 个。
@@ -106,12 +120,14 @@ mod imp {
         }
     }
 
-    pub fn holders(paths: &[PathBuf]) -> Vec<Holder> {
+    /// 见 [`super::holders_ex`]。只有**会话创建失败**才返回 `false`；
+    /// 注册资源失败（比如路径全不存在）当作「没有持有者」处理，检测本身是可用的。
+    pub fn holders_ex(paths: &[PathBuf]) -> (Vec<Holder>, bool) {
         if paths.is_empty() {
-            return Vec::new();
+            return (Vec::new(), true);
         }
         let Some(session) = Session::start() else {
-            return Vec::new();
+            return (Vec::new(), false); // 🔴 检测不可用 ≠ 没有占用
         };
 
         // 宽字符串必须活到 RmRegisterResources 调用结束 —— 所以先收集成 Vec，再取指针。
@@ -131,7 +147,7 @@ mod imp {
         };
         // 注册失败（路径全不存在等）＝ 没有持有者，静默返回空。
         if rc != ERROR_SUCCESS {
-            return Vec::new();
+            return (Vec::new(), true);
         }
 
         let mut reasons: u32 = 0;
@@ -149,10 +165,10 @@ mod imp {
             )
         };
         if rc != ERROR_SUCCESS && rc != ERROR_MORE_DATA {
-            return Vec::new();
+            return (Vec::new(), true);
         }
         if needed == 0 {
-            return Vec::new(); // 没有进程持有 → 可以安全迁移
+            return (Vec::new(), true); // 没有进程持有 → 可以安全迁移
         }
 
         let mut infos: Vec<RM_PROCESS_INFO> = vec![unsafe { std::mem::zeroed() }; needed as usize];
@@ -167,7 +183,7 @@ mod imp {
             )
         };
         if rc != ERROR_SUCCESS {
-            return Vec::new();
+            return (Vec::new(), true);
         }
 
         let mut out: Vec<Holder> = infos
@@ -180,7 +196,7 @@ mod imp {
             .collect();
         out.sort_by(|a, b| (a.pid, &a.app).cmp(&(b.pid, &b.app)));
         out.dedup();
-        out
+        (out, true)
     }
 }
 

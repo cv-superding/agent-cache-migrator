@@ -141,6 +141,9 @@ skip      = ["**/node_modules"]       # 可选：这些不进校验
 | [`pratham15541/windows-appdata-migrator`](https://github.com/pratham15541/windows-appdata-migrator)（PowerShell） | 「先校验、再切换」的两段式流程 |
 | [`snomiao/junction-move`](https://github.com/snomiao/junction-move)（JS） | 「搬走 + 建联接回来」的最小实现，可作对照 |
 | [`hwl513782273/WorkBuddyUpdateBlocker`](https://github.com/hwl513782273/WorkBuddyUpdateBlocker)（Swift, macOS） | 同类项目的**免责与边界写法**：写清「依赖内部机制，厂商改版就可能失效」，并在应用升级后提示重新检查 |
+| [`OPTOPIA/appdata-migrate-tool`](https://github.com/OPTOPIA/appdata-migrate-tool)（PowerShell） | **回滚前先把目标数据备份到恢复目录**（迁移后新增的数据不因回滚丢失）；迁移状态清单落盘（`.AppDataMigrateState`）—— 值得列入后续方向 |
+| [`zhao-wuyan/directory-migration-tool`](https://github.com/zhao-wuyan/directory-migration-tool)（C#/PowerShell） | **实时进度**（本项目的复制阶段真实进度即同类做法）；`-Repair` 修复模式（目标数据还在、只是链接丢了时只重建链接不复制）—— 值得列入后续方向 |
+| [`linad3d/drivekeeper`](https://github.com/linad3d/drivekeeper)（PowerShell, MIT） | 「独立重数校验，不信复制工具自己的汇总」「确认活写入」的验证哲学 —— 与本项目一致，作为交叉印证 |
 
 **默认目标目录**（三选一，界面上可改）：
 
@@ -208,8 +211,10 @@ agent-cache-migrator/
 ```bash
 acm detect                 # 检测本机 Agent（--json 给脚本用）
 acm plan codex             # 生成迁移计划 —— **不动任何文件**
-acm drives                 # 盘符 + 剩余空间 + 自动挑的目标根
+acm migrate codex --dest D:\AgentCache --yes   # 执行迁移（失败自动回滚）
+acm rollback codex         # 回滚：快照改回原位
 acm snapshots              # 列出迁移快照（可回滚的那份）
+acm drives                 # 盘符 + 剩余空间 + 自动挑的目标根
 ```
 
 ---

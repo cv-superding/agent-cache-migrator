@@ -14,6 +14,8 @@ acm —— AgentCache 命令行
   acm detect [选项]          检测本机装了哪些 Agent
   acm list                   列出注册表里的 Agent（不检测）
   acm plan <id> [--dest <根>]  为某个 Agent 生成迁移计划（**不动任何文件**）
+  acm migrate <id> [选项]    执行迁移（复制 → 校验 → 快照 → 联接，失败自动回滚）
+  acm rollback <id> [--yes]  回滚：把快照改回原位（联接必须先摘掉）
   acm snapshots              列出所有迁移快照（原目录改名保留的那份）
   acm drives                 列出盘符与剩余空间
   acm help                   显示这段帮助
@@ -27,6 +29,16 @@ detect 选项:
 plan 选项:
   --dest <根目录>        目标根目录（会拼上 agent id 作为子目录）；不给他们会自动挑
   --config <路径>        同上
+
+migrate 选项:
+  --dest <根目录>        同 plan
+  --yes                  跳过交互确认（脚本/自动化用）
+  --json                 输出 JSON 报告（进度走 stderr）
+  --config <路径>        同上
+
+rollback 选项:
+  --yes                  跳过交互确认
+  --config <路径>        同上
 ";
 
 fn main() -> ExitCode {
@@ -37,6 +49,8 @@ fn main() -> ExitCode {
         "detect" => cmd_detect(&args[1..]),
         "list" => cmd_list(&args[1..]),
         "plan" => cmd_plan(&args[1..]),
+        "migrate" => cmd_migrate(&args[1..]),
+        "rollback" => cmd_rollback(&args[1..]),
         "snapshots" => cmd_snapshots(&args[1..]),
         "drives" => cmd_drives(),
         "help" | "-h" | "--help" => {
@@ -274,6 +288,137 @@ fn print_plan(p: &migrate::Plan) {
         }
     }
     println!();
+}
+
+// ---------------------------------------------------------------- migrate / rollback
+
+/// 解析公共参数并解析出 (定义, 源目录)。
+fn resolve_target(args: &[String], usage: &str) -> Result<(acm_core::AgentDef, PathBuf), String> {
+    let id = args
+        .iter()
+        .find(|a| !a.starts_with("--"))
+        .ok_or(usage)?
+        .clone();
+    let cfg = flag_path(args, "--config");
+    let defs = agents::load(cfg.as_deref())?;
+    let def = defs
+        .iter()
+        .find(|d| d.id == id)
+        .ok_or_else(|| format!("注册表里没有 id = {id}"))?;
+    let src = def
+        .paths
+        .iter()
+        .find_map(|tpl| paths::expand(tpl).filter(|p| p.exists()))
+        .ok_or_else(|| format!("{} 的数据目录都不存在", def.name))?;
+    Ok((def.clone(), src))
+}
+
+fn confirm(prompt: &str, yes: bool) -> Result<bool, String> {
+    if yes {
+        return Ok(true);
+    }
+    print!("{prompt} (y/N) ");
+    use std::io::Write;
+    std::io::stdout().flush().map_err(|e| e.to_string())?;
+    let mut ans = String::new();
+    std::io::stdin()
+        .read_line(&mut ans)
+        .map_err(|e| format!("读不到确认输入：{e}"))?;
+    Ok(ans.trim().eq_ignore_ascii_case("y"))
+}
+
+fn cmd_migrate(args: &[String]) -> Result<(), String> {
+    let usage = "用法：acm migrate <agent-id> [--dest <目标根目录>] [--yes] [--json]";
+    let yes = args.iter().any(|a| a == "--yes");
+    let json = args.iter().any(|a| a == "--json");
+    let (def, src) = resolve_target(args, usage)?;
+
+    let dest_root = match flag_path(args, "--dest") {
+        Some(d) => d,
+        None => migrate::default_dest_root()
+            .ok_or("没能自动挑出目标盘（可能只有一个盘），请用 --dest 指定")?,
+    };
+    let p = migrate::plan(&def, &src, &dest_root)?;
+    if !p.blockers.is_empty() {
+        return Err(format!("还不能迁移：{}", p.blockers.join("；")));
+    }
+
+    if !json {
+        println!("【{}】{}", p.agent_id, p.agent_name);
+        println!("  源　　{}", p.src);
+        println!(
+            "  占用　{}（{} 文件）",
+            fsutil::human(p.src_measure.bytes),
+            p.src_measure.files
+        );
+        println!("  目标　{}", p.dest);
+        for w in &p.warnings {
+            println!("  ⚠ {w}");
+        }
+    }
+    if !confirm("确认执行迁移？", yes || json)? {
+        println!("已取消。");
+        return Ok(());
+    }
+
+    let rep = migrate::run(&p, &mut |pr| {
+        // 进度走 stderr：stdout 留给最终报告/JSON，方便管道
+        if !json {
+            let pct = pr.percent.map(|p| format!(" {p}%")).unwrap_or_default();
+            eprintln!("[{:>14}] {}{}", pr.step, pr.detail, pct);
+        }
+    });
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rep).map_err(|e| e.to_string())?
+        );
+    } else {
+        println!();
+        for s in &rep.steps {
+            println!(
+                "{} {} —— {}",
+                if s.ok { "✓" } else { "✗" },
+                s.name,
+                s.detail
+            );
+        }
+        if rep.ok {
+            println!("\n✅ 迁移完成：{} → {}", rep.src, rep.dest);
+            println!(
+                "   （原目录保留在 {}，确认无误后可在界面/CLI 清理）",
+                rep.snapshot.as_deref().unwrap_or("?")
+            );
+        } else if let Some(e) = &rep.error {
+            eprintln!("\n✗ 迁移失败：{e}（自动回滚：{}）", rep.rolled_back);
+        }
+    }
+    if !rep.ok {
+        return Err("迁移未成功".to_string());
+    }
+    Ok(())
+}
+
+fn cmd_rollback(args: &[String]) -> Result<(), String> {
+    let usage = "用法：acm rollback <agent-id> [--yes] [--config <路径>]";
+    let yes = args.iter().any(|a| a == "--yes");
+    let (def, src) = resolve_target(args, usage)?;
+
+    if !confirm(
+        &format!(
+            "把 {} 的快照改回原位？（{} 的联接会被摘掉）",
+            src.display(),
+            def.name
+        ),
+        yes,
+    )? {
+        println!("已取消。");
+        return Ok(());
+    }
+    let msg = migrate::rollback(&def, &src)?;
+    println!("✅ {msg}");
+    Ok(())
 }
 
 // ---------------------------------------------------------------- snapshots

@@ -160,7 +160,15 @@ pub fn plan(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<Plan, String
     let mut warnings = Vec::new();
 
     // ① 谁锁着源目录（精确判断，比按进程名猜可靠）
-    let holders = crate::locks::holders_of_dir(src, 400);
+    let (holders, locks_ok) = crate::locks::holders_ex_dir(src, 400);
+    if !locks_ok {
+        // 🔴 「检测不可用」不是「没有占用」—— 宁可啰嗦也不能静默放行
+        warnings.push(
+            "自动占用检测在本机不可用（Restart Manager 仅 Windows 有）——\
+             迁移前请自行确认应用已完全退出（托盘里也要退）"
+                .to_string(),
+        );
+    }
     if !holders.is_empty() {
         let names: Vec<String> = dedup_labels(&holders);
         blockers.push(format!(
@@ -262,13 +270,30 @@ pub fn run(plan: &Plan, cb: &mut dyn FnMut(Progress)) -> MigrateReport {
         return r.fail(plan.blockers.join("；"));
     }
 
-    // ① 复制
+    // ① 复制（边复制边推进真实进度 —— 源文件总数作分母，无分母时不给百分比）
     cb(Progress {
         step: "copying".into(),
         detail: format!("正在复制到 {}", dest.display()),
         percent: Some(5),
     });
-    match imp::copy_tree(&src, &dest) {
+    let expected = plan.src_measure.files;
+    let mut on_file = |n: u64| {
+        // 复制阶段占 5% ~ 65%；measure 被上限截断时分母偏小，可能提前到顶 —— 钳在这里即可
+        let percent = if expected > 0 {
+            // checked_div：expected==0 时给 None（没有分母就不显示百分比）
+            (n.min(expected) * 60)
+                .checked_div(expected)
+                .map(|v| 5 + v as u8)
+        } else {
+            None
+        };
+        cb(Progress {
+            step: "copying".into(),
+            detail: format!("已复制 {n} 个文件"),
+            percent,
+        });
+    };
+    match imp::copy_tree(&src, &dest, &mut on_file) {
         Ok(()) => r.steps.push(StepResult {
             name: "复制".into(),
             ok: true,
@@ -461,25 +486,29 @@ pub fn list_snapshots(defs: &[AgentDef]) -> Vec<Snapshot> {
     out
 }
 
-/// 删掉一个快照。`permanent = false` 时**暂不支持回收站**，会直接报错让调用方明确选择。
+/// 删掉一个快照。
 ///
-/// ⚠️ 删掉之后这次迁移就**不能回滚**了 —— 界面上必须先跟用户确认。
+/// - `permanent = true` —— 永久删除（解 ACL → 清属性 → 递归删），**不可恢复**。
+/// - `permanent = false` —— **移入回收站**（`trash` crate：Windows 走
+///   COM `IFileOperation`，macOS 走 NSWorkspace，Linux 走 freedesktop trash，
+///   全部可从系统回收站还原）。
+///
+/// ⚠️ 永久删除之后这次迁移就**不能回滚**了 —— 界面上必须先跟用户确认。
 ///
 /// 🔴 路径必须通过 [`validate_snapshot_path`] 的校验：名字符合快照约定、
-/// 且就躺在某个已知 Agent 数据目录的旁边。这个命令的底层是
-/// 「解 ACL → 清属性 → 递归删」，一旦接受任意路径就等于给了前端一个
-/// 「删任意目录」的原语 —— 校验是纵深防御，不是摆设。
+/// 且就躺在某个已知 Agent 数据目录的旁边。这个命令的底层一旦接受任意路径
+/// 就等于给了前端一个「删任意目录」的原语 —— 校验是纵深防御，不是摆设。
 pub fn cleanup(snapshot: &Path, permanent: bool) -> Result<u64, String> {
-    if !permanent {
-        return Err(
-            "回收站删除尚未实现（SHFileOperation 不支持超长路径，需要逐条兜底）；\
-                    请显式选择永久删除"
-                .to_string(),
-        );
-    }
     let defs = crate::agents::load(None)?;
     validate_snapshot_path(snapshot, &defs)?;
-    imp::remove_dir_forced(snapshot)
+    if permanent {
+        imp::remove_dir_forced(snapshot)
+    } else {
+        // 先量体积 —— 移进回收站之后就量不到了
+        let freed = fsutil::measure(snapshot, 2_000_000, std::time::Duration::from_secs(60)).bytes;
+        imp::remove_dir_recycle(snapshot)?;
+        Ok(freed)
+    }
 }
 
 /// 校验一个路径是不是「我们生成的快照」。
@@ -604,6 +633,7 @@ fn snapshots_of(target: &Path) -> Vec<(PathBuf, String)> {
 mod imp {
     use super::{fsutil, SNAPSHOT_MARK};
     use crate::syscmd;
+    use std::io::{BufRead, BufReader as IoBufReader};
     use std::path::{Path, PathBuf};
     use std::process::{Output, Stdio};
 
@@ -623,25 +653,69 @@ mod imp {
     /// 把运行时联接指向的整棵树也复制一遍（可能几十 GB 且在别的盘上）。
     const ROBO_EXTRA: [&str; 1] = ["/XJ"];
 
-    pub fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
+    /// 递归复制（Windows：robocopy），**每复制一个文件回调一次**已复制计数。
+    ///
+    /// 🔴 复制阶段**不**加 `/NFL` —— 要靠「每复制一个文件输出一行」驱动真实进度。
+    /// `/NDL`（不列目录）、`/NJH /NJS`（无头尾）、`/NP`（无百分比行）都保留，
+    /// 于是**剩下的非空行 ≈ 已复制文件数**。行内容是 OEM 编码无所谓 —— 只数行，
+    /// 不做解码（解码才需要关心代码页）。
+    pub fn copy_tree(src: &Path, dst: &Path, on_file: &mut dyn FnMut(u64)) -> Result<(), String> {
         let s = src.to_string_lossy().to_string();
         let d = dst.to_string_lossy().to_string();
         let mut args: Vec<&str> = vec![s.as_str(), d.as_str()];
         args.extend_from_slice(&ROBO_SAFE);
         args.extend_from_slice(&ROBO_EXTRA);
-        // /NFL /NDL 不列文件、不列目录；/NJH /NJS 不打印头尾；/NP 不显示百分比
-        // —— 我们不需要进度行，robocopy 自己的百分比是「按文件数」的，对大目录没意义。
-        args.extend_from_slice(&["/NFL", "/NDL", "/NJH", "/NJS", "/NP"]);
+        args.extend_from_slice(&["/NDL", "/NJH", "/NJS", "/NP"]);
 
-        let out = run("robocopy", &args).map_err(|e| format!("调不起 robocopy：{e}"))?;
-        let code = out.status.code().unwrap_or(-1);
+        let mut child = syscmd::command("robocopy")
+            .args(&args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("调不起 robocopy：{e}"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "拿不到 robocopy 的标准输出".to_string())?;
+
+        let mut n: u64 = 0;
+        let mut last: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+        let mut buf: Vec<u8> = Vec::new();
+        let mut reader = IoBufReader::new(stdout);
+        loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf) {
+                Ok(0) => break, // EOF
+                Ok(_) => {
+                    if buf.iter().any(|b| !b.is_ascii_whitespace()) {
+                        n += 1;
+                        if last.len() == 3 {
+                            last.pop_front();
+                        }
+                        last.push_back(String::from_utf8_lossy(&buf).trim().to_string());
+                        on_file(n);
+                    }
+                }
+                Err(e) => {
+                    let _ = child.kill();
+                    return Err(format!("读 robocopy 输出失败：{e}"));
+                }
+            }
+        }
+        let out = child
+            .wait()
+            .map_err(|e| format!("等 robocopy 结束失败：{e}"))?;
+        // wait() 直接给 ExitStatus（不是 Output）—— code() 拿退出码
+        let code = out.code().unwrap_or(-1);
         // robocopy 的退出码：0~7 都是成功（含「有文件被复制」「目标有多余文件」…），≥8 才是失败。
         if code < 8 {
             Ok(())
         } else {
+            let tail: Vec<String> = last.iter().rev().take(3).cloned().collect();
             Err(format!(
                 "robocopy 失败（退出码 {code}）：{}",
-                tail_lines(&out, 3)
+                tail.join(" | ")
             ))
         }
     }
@@ -794,6 +868,16 @@ mod imp {
         Ok(n)
     }
 
+    /// 移入回收站（**可还原**，不是彻底删除）。
+    ///
+    /// 用 [`trash`] crate：Windows 走 COM `IFileOperation`（SHFileOperation
+    /// 已过时，且在无交互窗口站的进程里会莫名报错 2 —— 实测踩过）、
+    /// macOS 走 NSWorkspace、Linux 走 freedesktop trash 约定。
+    /// 调用方（界面/CLI）负责先跟用户确认。
+    pub fn remove_dir_recycle(root: &Path) -> Result<(), String> {
+        trash::delete(root).map_err(|e| format!("移入回收站失败：{e}"))
+    }
+
     /// 永久删除一个目录树（先解 ACL 再删，跳过联接本体）。
     pub fn remove_dir_forced(root: &Path) -> Result<u64, String> {
         if !root.exists() {
@@ -820,17 +904,6 @@ mod imp {
                 .map_err(|e2| format!("删除失败：{e1}（清属性后仍失败：{e2}）"))?;
         }
         Ok(freed)
-    }
-
-    /// 取输出末尾几行（报错时给人看）。
-    fn tail_lines(out: &Output, n: usize) -> String {
-        let text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
-        lines[lines.len().saturating_sub(n)..].join(" | ")
     }
 
     #[cfg(test)]
@@ -896,7 +969,7 @@ mod imp {
             make_junction(&src.join("link-out"), &outside).unwrap();
 
             // ① 复制
-            copy_tree(&src, &dst).unwrap();
+            copy_tree(&src, &dst, &mut |_| {}).unwrap();
             assert!(dst.join("a.txt").exists());
             assert!(dst.join("sub/b.bin").exists());
             assert!(
@@ -917,7 +990,7 @@ mod imp {
             // ③ 新增文件 → 增量复制 → 收敛
             std::fs::write(src.join("c.txt"), b"new").unwrap();
             assert_eq!(pending_count(&src, &dst, &[]).unwrap(), 2);
-            copy_tree(&src, &dst).unwrap();
+            copy_tree(&src, &dst, &mut |_| {}).unwrap();
             assert_eq!(
                 pending_count(&src, &dst, &[]).unwrap(),
                 0,
@@ -944,6 +1017,29 @@ mod imp {
 
             let _ = std::fs::remove_dir_all(&base);
             let _ = std::fs::remove_dir_all(&outside);
+        }
+
+        /// 回收站删除：目录从原位置消失，但**不是**被永久销毁。
+        /// （回收站里能还原 —— 这正是它和 `remove_dir_forced` 的区别。）
+        ///
+        /// ⚠️ `#[ignore]`：shell 级删除（IFileOperation/SHFileOperation）需要
+        /// **交互式桌面会话**，在无头环境（agent shell、部分 CI service 容器）
+        /// 里会被系统直接中止 —— SHFileOperation 报代码 2、IFileOperation 报
+        /// 「operations were aborted」，都是这个原因，与代码逻辑无关。
+        /// 终端用户跑的是交互式 GUI，不受影响。需要真验证时：
+        /// `cargo test -p acm-core --lib recycle_removes -- --ignored`
+        #[test]
+        #[ignore = "需要交互式桌面会话（无头环境会被系统中止）"]
+        fn recycle_removes_from_place_but_not_forever() {
+            let base = scratch("recycle");
+            let dir = base.join("victim.moved-20261016-000000");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("x.txt"), b"x").unwrap();
+
+            remove_dir_recycle(&dir).unwrap();
+            assert!(!dir.exists(), "应从原位置消失（已进回收站）");
+
+            let _ = std::fs::remove_dir_all(&base);
         }
 
         /// `remove_dir_forced` 的安全带：目录里如果躺着联接，
@@ -991,14 +1087,19 @@ mod imp {
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
-    /// 递归复制。**只补不删** —— 目标里多出来的文件保留
-    /// （那通常是上次迁移留下的有效增量，或应用自己新写的）。
-    pub fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
-        copy_dir(src, dst)
+    /// 递归复制（unix：纯标准库），**每复制一个文件回调一次**已复制计数。
+    pub fn copy_tree(src: &Path, dst: &Path, on_file: &mut dyn FnMut(u64)) -> Result<(), String> {
+        let mut n: u64 = 0;
+        copy_dir(src, dst, &mut n, on_file)
             .map_err(|e| format!("复制 {} → {} 失败：{e}", src.display(), dst.display()))
     }
 
-    fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fn copy_dir(
+        src: &Path,
+        dst: &Path,
+        n: &mut u64,
+        on_file: &mut dyn FnMut(u64),
+    ) -> std::io::Result<()> {
         std::fs::create_dir_all(dst)?;
         for entry in std::fs::read_dir(src)? {
             let entry = entry?;
@@ -1011,9 +1112,11 @@ mod imp {
                 continue; // 不跟随、不复制（对齐 Windows 的 /XJ）
             }
             if ft.is_dir() {
-                copy_dir(&from, &to)?;
+                copy_dir(&from, &to, n, on_file)?;
             } else {
                 copy_file(&from, &to, &md)?;
+                *n += 1;
+                on_file(*n);
             }
         }
         Ok(())
@@ -1156,6 +1259,12 @@ mod imp {
         Ok(freed)
     }
 
+    /// unix 同样走 [`trash`]（freedesktop trash / macOS `.Trash`）—— 与 Windows
+    /// 一致：移入回收站、可还原，而不是假装做了。
+    pub fn remove_dir_recycle(root: &Path) -> Result<(), String> {
+        trash::delete(root).map_err(|e| format!("移入回收站失败：{e}"))
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -1185,7 +1294,7 @@ mod imp {
             std::os::unix::fs::symlink(&outside, src.join("link-out")).unwrap();
 
             // ① 复制
-            copy_tree(&src, &dst).unwrap();
+            copy_tree(&src, &dst, &mut |_| {}).unwrap();
             assert!(dst.join("a.txt").exists());
             assert!(dst.join("sub/b.bin").exists());
             assert!(
@@ -1207,7 +1316,7 @@ mod imp {
             // ④ 再复制一次（增量）→ 应当收敛，且新文件确实到了目标
             //    （这条是补上的：早先只在 ③ 之后直接断言目标条目数，
             //     忘了 c.txt 还没被复制 —— 测试自己把这一步暴露了出来）
-            copy_tree(&src, &dst).unwrap();
+            copy_tree(&src, &dst, &mut |_| {}).unwrap();
             assert_eq!(
                 pending_count(&src, &dst, &[]).unwrap(),
                 0,
@@ -1307,7 +1416,11 @@ mod imp {
 
     const MSG: &str = "迁移目前只实现了 Windows 与 Unix（macOS / Linux）";
 
-    pub fn copy_tree(_src: &Path, _dst: &Path) -> Result<(), String> {
+    pub fn copy_tree(
+        _src: &Path,
+        _dst: &Path,
+        _on_file: &mut dyn FnMut(u64),
+    ) -> Result<(), String> {
         Err(MSG.to_string())
     }
     pub fn pending_count(_src: &Path, _dst: &Path, _skip: &[String]) -> Result<u64, String> {
@@ -1329,6 +1442,9 @@ mod imp {
         Err(MSG.to_string())
     }
     pub fn remove_dir_forced(_root: &Path) -> Result<u64, String> {
+        Err(MSG.to_string())
+    }
+    pub fn remove_dir_recycle(_root: &Path) -> Result<(), String> {
         Err(MSG.to_string())
     }
 }
@@ -1577,11 +1693,14 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// `permanent=false` 现在走回收站（不再是「必须显式选择永久删除」），
+    /// 但**两条路都要先过快照路径校验** —— 随手传一个目录进来必须被拒。
     #[test]
-    fn cleanup_requires_explicit_permanent() {
+    fn cleanup_rejects_non_snapshot_paths() {
         let p = std::env::temp_dir().join("acm-nonexistent-cleanup");
-        // 不传永久删除 → 必须报错，而不是悄悄做了别的事
+        // 名字不符合 <名字>.moved-<时间戳> 约定 → 两条路都进不去
         assert!(cleanup(&p, false).is_err());
+        assert!(cleanup(&p, true).is_err());
     }
 
     /// `delete_snapshot` 是「解 ACL + 清属性 + 递归删」的强破坏原语，

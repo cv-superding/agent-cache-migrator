@@ -70,6 +70,7 @@ export default function App() {
     okText: string;
     danger?: boolean;
     onOk: () => void;
+    extra?: { text: string; onOk: () => void };
   } | null>(null);
   const [ver, setVer] = useState<{ app: string; core: string } | null>(null);
 
@@ -206,10 +207,13 @@ export default function App() {
     }
   }
 
-  async function doDeleteSnapshot(path: string) {
+  async function doDeleteSnapshot(path: string, permanent: boolean) {
     try {
-      const r = await api.deleteSnapshot(path, true);
-      toast("已删除快照", `回收 ${r.freedText}`);
+      const r = await api.deleteSnapshot(path, permanent);
+      toast(
+        permanent ? "已永久删除快照" : "已移入回收站",
+        `回收 ${r.freedText}${permanent ? "" : "（可在系统回收站还原）"}`,
+      );
       await refreshSnapshots();
       await refreshDrives();
     } catch (e) {
@@ -350,9 +354,10 @@ export default function App() {
             }}
             onDelete={(s) =>
               setConfirm({
-                title: "永久删除这个快照？",
+                title: "删除这个快照？",
                 okText: "永久删除",
                 danger: true,
+                extra: { text: "移入回收站", onOk: () => void doDeleteSnapshot(s.path, false) },
                 body: (
                   <>
                     <div className="rows">
@@ -360,11 +365,13 @@ export default function App() {
                       <Row k="占用" v={`${human(s.measure.bytes)} · ${s.measure.files} 文件`} />
                     </div>
                     <div className="note danger" style={{ marginTop: 10 }}>
-                      删掉之后<b>这次迁移就不能回滚了</b>，而且不可恢复。确认迁移后一切都正常再删。
+                      <b>永久删除</b>后这次迁移就<b>不能回滚</b>了，且不可恢复；
+                      「移入回收站」可从系统回收站还原（仅 Windows）。
+                      确认迁移后一切都正常再删。
                     </div>
                   </>
                 ),
-                onOk: () => void doDeleteSnapshot(s.path),
+                onOk: () => void doDeleteSnapshot(s.path, true),
               })
             }
           />
@@ -392,6 +399,7 @@ export default function App() {
           title={confirm.title}
           okText={confirm.okText}
           danger={confirm.danger}
+          extra={confirm.extra}
           onCancel={() => setConfirm(null)}
           onOk={() => {
             const f = confirm.onOk;

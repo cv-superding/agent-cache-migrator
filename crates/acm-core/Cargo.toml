@@ -11,6 +11,9 @@ serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 chrono.workspace = true
+trash = "5"
+# 回收站删除：Windows 走 IFileOperation / macOS 走 NSWorkspace / Linux 走 freedesktop trash
+# （三平台统一实现，替代各自手写；SHFileOperation 在无交互进程里不可靠，实测踩过）
 
 # 精确占用检测（Restart Manager）+ 盘符/剩余空间。只在 Windows 上需要，别的平台走空实现。
 [target.'cfg(windows)'.dependencies]
@@ -18,4 +21,5 @@ windows-sys = { version = "0.52", features = [
     "Win32_Foundation",
     "Win32_System_RestartManager",
     "Win32_Storage_FileSystem",
+    "Win32_UI_Shell",
 ] }
