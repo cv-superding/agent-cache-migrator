@@ -105,23 +105,21 @@ jobs:
         shell: bash
         run: cargo test -p acm-core -p acm-cli --all-targets
 
-  # ---------------------------------------------------------------- clippy（观察期）
+  # ---------------------------------------------------------------- clippy
   #
-  # lint 比 rustc 严得多，存量代码可能还有一批警告；直接 -D warnings 会把 CI 打红。
-  # 先以「报告但不阻塞」的方式跑起来，等存量警告清零后再并进 core job 转硬约束。
+  # 存量警告已清零 —— 转成硬约束（-D warnings），新代码带 lint 进来直接挂。
   clippy:
-    name: clippy（观察）
+    name: clippy
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          # 覆盖 job 级的 -D warnings：clippy 自己的 lint 用 -W 门槛报告即可
           rustflags: ""
 
-      - run: cargo clippy -p acm-core -p acm-cli --all-targets
+      - name: cargo clippy（-D warnings）
+        run: cargo clippy -p acm-core -p acm-cli --all-targets -- -D warnings
 
   # ---------------------------------------------------------------- 前端
   frontend:

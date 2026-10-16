@@ -285,10 +285,11 @@ pub fn plan(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<Plan, String
     }
     if let Some(env) = &def.env_relocate {
         warnings.push(format!(
-            "这个 Agent 官方支持用环境变量 {} 重定位数据目录（更干净、不留联接）。\
-             自动设置暂未实现，需要的话请手工设置该变量；\
-             当前将走「搬目录 + 建联接」（对应用透明、更通用）。",
-            env.env
+            "这个 Agent 官方支持用环境变量 {} 重定位数据目录。\
+             当前走「搬目录 + 建联接」（对应用透明、更通用）；\
+             也可以用 `acm env {id}` 自动设置该变量（更干净、不留联接）。",
+            env.env,
+            id = def.id
         ));
     }
     // 多目录 Agent：本函数一次只迁一个目录，GUI 只挑主目录 —— 如实告知还有别的

@@ -15,6 +15,7 @@
 //! 加一个 Agent 只改配置。这样内核可以同时被 GUI、CLI 和别的项目复用。
 
 pub mod agents;
+pub mod envvar;
 pub mod fsutil;
 pub mod globs;
 pub mod locks;

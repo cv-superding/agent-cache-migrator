@@ -23,8 +23,9 @@
 #               ⚠️ appId ≠ 数据目录名，两边要分别写对
 #  env_relocate 该应用**官方支持的**数据目录重定位开关
 #               { env = "VAR_NAME", note = "…" }
-#               ⚠️ 当前仅用于**提示**（生成计划时告知「官方支持环境变量重定位」），
-#               不会自动设置变量 —— 想用官方开关请按提示手工设置
+#               配了它就可以用 `acm env <id> --dest <根>` 自动设置（Windows 写用户级注册表），
+#               或 `acm env <id> --unset` 恢复默认路径。**同一程序有多个版本时别用**：
+#               一个变量会把两份数据指到同一目录、互相踩（见 workbuddy 的注释）
 #  processes    迁移前要退出的进程名（不区分大小写，支持 * 通配）。留空 = 不检查
 #               注：占用检测优先用 Windows Restart Manager API（精确到「谁锁着这个文件夹」），
 #               processes 只在拿不到锁信息时兜底
@@ -200,6 +201,25 @@ kind     = "generic"
 class    = "normal"
 paths    = ["~/.lingma"]
 processes = []
+
+
+[[agent]]
+id       = "trae-intl"
+name     = "Trae 国际版"
+vendor   = "字节跳动"
+kind     = "electron"
+class    = "normal"
+paths    = ["%APPDATA%/Trae"]
+processes = ["Trae.exe"]
+
+[[agent]]
+id       = "codebuddy-intl"
+name     = "CodeBuddy 国际版"
+vendor   = "腾讯"
+kind     = "electron"
+class    = "normal"
+paths    = ["%APPDATA%/CodeBuddy"]
+processes = ["CodeBuddy.exe"]
 
 
 # ───────────────────────────── 缓存类（class="safe"）示例 ─────────────────────────────

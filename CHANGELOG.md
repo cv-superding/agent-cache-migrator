@@ -2,6 +2,17 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.6.0] - 2026-10-17
+
+### 新增
+
+- **env_relocate 自动设置**（此前 README 明确「暂未实现」的最后一项）：`acm env <id> [--dest <根>]` 一键设置 Agent 官方支持的重定位环境变量（Windows：写 `HKCU\Environment` + 广播 `WM_SETTINGCHANGE`，重启应用生效）；`--unset` 恢复默认路径。仅限配置里声明了 `env_relocate` 的 Agent（Codex `CODEX_HOME`、Claude Code `CLAUDE_CONFIG_DIR`）；设置前展示原值，删除前明确警告「数据已搬走时先确认原路径可用」。unix 不自动改 shell profile（各 shell 语法不同），明确报错。
+- **内置注册表新增 2 个国际版**：Trae 国际版（`%APPDATA%\Trae`）、CodeBuddy 国际版（`%APPDATA%\CodeBuddy`）—— 共 18 个。
+
+### 变更
+
+- **CI clippy 从「观察期」转为硬约束**（`-D warnings`）：存量警告已清零。
+
 ## [0.5.0] - 2026-10-17
 
 ### 新增

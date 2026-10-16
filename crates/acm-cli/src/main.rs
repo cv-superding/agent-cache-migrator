@@ -17,6 +17,7 @@ acm —— AgentCache 命令行
   acm migrate <id> [选项]    执行迁移（复制 → 校验 → 快照 → 联接，失败自动回滚）
   acm rollback <id> [--yes]  回滚：把快照改回原位（迁移后新数据会先备份到恢复目录）
   acm repair <id> [选项]     修复：目标数据还在但链接坏了/丢了，只重建链接不复制数据
+  acm env <id> [选项]        设置/删除 Agent 官方支持的重定位环境变量（仅限配了 env_relocate 的）
   acm snapshots              列出所有迁移快照（原目录改名保留的那份）
   acm history [--all]        查看迁移历史（最近 20 条，--all 全部）
   acm drives                 列出盘符与剩余空间
@@ -46,6 +47,12 @@ repair 选项:
   --dest <根目录>        数据所在的根（会拼上 agent id 作为子目录）；不给他们会自动挑
   --yes                  跳过交互确认
   --config <路径>        同上
+
+env 选项:
+  --dest <根目录>        变量要指向的根（会拼上 agent id 作为子目录）；不给他们会自动挑
+  --unset                删除该变量（恢复应用默认路径）
+  --yes                  跳过交互确认
+  --config <路径>        同上
 ";
 
 fn main() -> ExitCode {
@@ -59,6 +66,7 @@ fn main() -> ExitCode {
         "migrate" => cmd_migrate(&args[1..]),
         "rollback" => cmd_rollback(&args[1..]),
         "repair" => cmd_repair(&args[1..]),
+        "env" => cmd_env(&args[1..]),
         "snapshots" => cmd_snapshots(&args[1..]),
         "history" => cmd_history(&args[1..]),
         "drives" => cmd_drives(),
@@ -538,6 +546,88 @@ fn cmd_repair(args: &[String]) -> Result<(), String> {
     println!("✅ [{}] {}", rep.action, rep.detail);
     if rep.action != "noop" {
         println!("   {} → {}", rep.src, rep.dest);
+    }
+    Ok(())
+}
+
+/// 设置/删除 Agent 官方支持的重定位环境变量（仅限配了 env_relocate 的）。
+///
+/// ⚠️ 这是**持久的用户级系统变更**：设置前展示原值；删除会恢复应用默认路径 ——
+/// 但如果数据已经搬走而原路径没有联接，删变量后应用会「找不到数据」，
+/// 所以 unset 前必须让用户明确确认。
+fn cmd_env(args: &[String]) -> Result<(), String> {
+    let usage = "用法：acm env <agent-id> [--dest <根>] [--unset] [--yes] [--config <路径>]";
+    let yes = args.iter().any(|a| a == "--yes");
+    let unset = args.iter().any(|a| a == "--unset");
+    let id = positional(args, usage)?;
+    let cfg = flag_path(args, "--config");
+    let defs = agents::load(cfg.as_deref())?;
+    let def = defs
+        .iter()
+        .find(|d| d.id == id)
+        .ok_or_else(|| format!("注册表里没有 id = {id}"))?;
+
+    let env = def.env_relocate.as_ref().ok_or_else(|| {
+        format!(
+            "{} 没有声明官方支持的环境变量重定位（env_relocate）",
+            def.name
+        )
+    })?;
+
+    if unset {
+        let old = acm_core::envvar::get(&env.env);
+        if old.is_none() {
+            println!("{} 当前未设置，无需删除。", env.env);
+            return Ok(());
+        }
+        if !confirm(
+            &format!(
+                "删除 {}（当前值 {}）？\n⚠ 如果数据已经搬到别处而原路径没有联接，\
+                 删除后应用会找不到数据 —— 请确认原路径可用后再删",
+                env.env,
+                old.as_deref().unwrap_or("?")
+            ),
+            yes,
+        )? {
+            println!("已取消。");
+            return Ok(());
+        }
+        acm_core::envvar::remove(&env.env)?;
+        println!("✅ 已删除 {}（重启应用后恢复默认路径）", env.env);
+        return Ok(());
+    }
+
+    let dest_root = match flag_path(args, "--dest") {
+        Some(d) => d,
+        None => migrate::default_dest_root().ok_or("没能自动挑出目标盘，请用 --dest 指定")?,
+    };
+    let value = dest_root.join(&def.id);
+    let old = acm_core::envvar::get(&env.env);
+
+    if !confirm(
+        &format!(
+            "设置 {} = {}？\n当前值：{}\n⚠ 这是持久的用户级变更；重启应用后生效。\
+             同一程序有多个版本时，一个变量会把它们指到同一目录 —— 配置里的警告要看",
+            env.env,
+            value.display(),
+            old.as_deref().unwrap_or("（未设置）")
+        ),
+        yes,
+    )? {
+        println!("已取消。");
+        return Ok(());
+    }
+    acm_core::envvar::set(&env.env, &value.to_string_lossy())?;
+    println!(
+        "✅ 已设置 {} = {}（重启应用后生效）",
+        env.env,
+        value.display()
+    );
+    if let Some(o) = old {
+        println!(
+            "   （原值 {} —— 想恢复默认路径可用 acm env {} --unset）",
+            o, def.id
+        );
     }
     Ok(())
 }
