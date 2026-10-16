@@ -49,6 +49,12 @@ pub fn holders_ex(paths: &[PathBuf]) -> (Vec<Holder>, bool) {
     imp::holders_ex(paths)
 }
 
+/// 见 Windows 版说明。
+#[cfg(not(windows))]
+pub fn holders(_paths: &[PathBuf]) -> Vec<Holder> {
+    Vec::new()
+}
+
 /// 见 Windows 版说明。非 Windows 没有 Restart Manager：**恒不可用**。
 #[cfg(not(windows))]
 pub fn holders_ex(_paths: &[PathBuf]) -> (Vec<Holder>, bool) {
