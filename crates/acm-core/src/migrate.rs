@@ -417,11 +417,8 @@ pub fn history_path() -> Option<PathBuf> {
 }
 
 fn append_history(rep: &MigrateReport, agent_id: &str) {
-    let Some(p) = history_path() else { return };
-    if let Some(dir) = p.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
     let line = serde_json::json!({
+        "type": "migrate",
         "ts": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
         "agent": agent_id,
         "src": rep.src,
@@ -431,6 +428,28 @@ fn append_history(rep: &MigrateReport, agent_id: &str) {
         "rolledBack": rep.rolled_back,
         "snapshot": rep.snapshot,
     });
+    append_history_line(&line);
+}
+
+/// 环境变量变更也入账 —— 历史的意义就是「事后能回答做过什么」，
+/// 改了用户级系统状态的操作更不能缺席。
+pub fn append_env_history(agent_id: &str, var: &str, action: &str, detail: &str) {
+    let line = serde_json::json!({
+        "type": "env",
+        "ts": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
+        "agent": agent_id,
+        "var": var,
+        "action": action,
+        "detail": detail,
+    });
+    append_history_line(&line);
+}
+
+fn append_history_line(line: &serde_json::Value) {
+    let Some(p) = history_path() else { return };
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
     let ok = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -753,11 +772,13 @@ pub fn env_relocate_apply(
             return Ok(format!("{} 当前未设置，无需删除。", env.env));
         }
         crate::envvar::remove(&env.env)?;
-        return Ok(format!(
+        let msg = format!(
             "已删除 {}（重启应用后恢复默认路径；原值 {}）",
             env.env,
             old.unwrap_or_default()
-        ));
+        );
+        append_env_history(&def.id, &env.env, "unset", &msg);
+        return Ok(msg);
     }
 
     let Some(dest_root) = dest_root else {
@@ -770,6 +791,7 @@ pub fn env_relocate_apply(
     if let Some(o) = old {
         msg.push_str(&format!("（原值 {o}）"));
     }
+    append_env_history(&def.id, &env.env, "set", &msg);
     Ok(msg)
 }
 

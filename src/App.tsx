@@ -64,14 +64,18 @@ export default function App() {
   const [settingEnv, setSettingEnv] = useState(false);
   const [history, setHistory] = useState<{
     items: {
+      type?: string;
       ts: string;
       agent: string;
-      src: string;
-      dest: string;
-      ok: boolean;
+      src?: string;
+      dest?: string;
+      ok?: boolean;
       error?: string | null;
       rolledBack?: boolean;
       snapshot?: string | null;
+      var?: string;
+      action?: string;
+      detail?: string;
     }[];
     path: string;
   } | null>(null);
@@ -673,7 +677,7 @@ function StatusCard({
   );
 }
 
-/** 迁移历史卡片 —— 每次 run（无论成败）都记一条，事后能查账。 */
+/** 迁移历史卡片 —— 每次 run / 环境变量变更都记一条，事后能查账。 */
 function HistoryCard({
   history,
   showAll,
@@ -681,14 +685,18 @@ function HistoryCard({
 }: {
   history: {
     items: {
+      type?: string;
       ts: string;
       agent: string;
-      src: string;
-      dest: string;
-      ok: boolean;
+      src?: string;
+      dest?: string;
+      ok?: boolean;
       error?: string | null;
       rolledBack?: boolean;
       snapshot?: string | null;
+      var?: string;
+      action?: string;
+      detail?: string;
     }[];
     path: string;
   } | null;
@@ -708,24 +716,41 @@ function HistoryCard({
       ) : (
         <>
           <div className="rows">
-            {items.map((it, i) => (
-              <div key={`${it.ts}-${i}`} style={{ marginBottom: 6, fontSize: 12.5 }}>
-                <span className={it.ok ? "badge b-ok" : "badge b-danger"}>
-                  {it.ok ? "成功" : "失败"}
-                </span>{" "}
-                <span style={{ color: "var(--muted)" }}>{it.ts}</span>{" "}
-                <span className="mono">{it.agent}</span>
-                <div className="mono" style={{ opacity: 0.8, marginTop: 2 }}>
-                  {it.src} → {it.dest}
+            {items.map((it, i) => {
+              const isEnv = it.type === "env";
+              return (
+                <div key={`${it.ts}-${i}`} style={{ marginBottom: 6, fontSize: 12.5 }}>
+                  {isEnv ? (
+                    <>
+                      <span className="badge b-gray">环境变量</span>{" "}
+                      <span style={{ color: "var(--muted)" }}>{it.ts}</span>{" "}
+                      <span className="mono">{it.agent}</span>
+                      <div className="mono" style={{ opacity: 0.8, marginTop: 2 }}>
+                        {it.var} —— {it.action}
+                      </div>
+                      <div style={{ opacity: 0.8, marginTop: 2 }}>{it.detail}</div>
+                    </>
+                  ) : (
+                    <>
+                      <span className={it.ok ? "badge b-ok" : "badge b-danger"}>
+                        {it.ok ? "成功" : "失败"}
+                      </span>{" "}
+                      <span style={{ color: "var(--muted)" }}>{it.ts}</span>{" "}
+                      <span className="mono">{it.agent}</span>
+                      <div className="mono" style={{ opacity: 0.8, marginTop: 2 }}>
+                        {it.src} → {it.dest}
+                      </div>
+                      {it.error && (
+                        <div style={{ color: "#b91c1c", marginTop: 2 }}>
+                          {it.error}
+                          {it.rolledBack && "（已自动回滚）"}
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
-                {it.error && (
-                  <div style={{ color: "#b91c1c", marginTop: 2 }}>
-                    {it.error}
-                    {it.rolledBack && "（已自动回滚）"}
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
           <button className="btn" style={{ marginTop: 8 }} onClick={onToggleAll}>
             {showAll ? "只看最近 15 条" : "查看全部"}
