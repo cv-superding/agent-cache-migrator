@@ -730,6 +730,49 @@ fn rescue_changed_files(
     Ok((files, bytes))
 }
 
+/// 设置/删除 Agent 官方支持的重定位环境变量（`env_relocate` 的执行端）。
+///
+/// - `unset = false`：把 `env.env` 设为 `dest_root/<agent-id>`（持久、用户级）
+/// - `unset = true`：删除该变量，恢复应用默认路径
+///
+/// ⚠️ 持久的用户级变更 —— 调用方（界面/CLI）必须先展示原值并确认。
+/// 返回人类可读的结果描述（含原值，方便撤销）。
+pub fn env_relocate_apply(
+    def: &AgentDef,
+    dest_root: Option<&Path>,
+    unset: bool,
+) -> Result<String, String> {
+    let env = def
+        .env_relocate
+        .as_ref()
+        .ok_or_else(|| format!("{} 没有声明官方支持的环境变量重定位", def.name))?;
+
+    if unset {
+        let old = crate::envvar::get(&env.env);
+        if old.is_none() {
+            return Ok(format!("{} 当前未设置，无需删除。", env.env));
+        }
+        crate::envvar::remove(&env.env)?;
+        return Ok(format!(
+            "已删除 {}（重启应用后恢复默认路径；原值 {}）",
+            env.env,
+            old.unwrap_or_default()
+        ));
+    }
+
+    let Some(dest_root) = dest_root else {
+        return Err("需要指定目标根目录".to_string());
+    };
+    let value = dest_root.join(&def.id);
+    let old = crate::envvar::get(&env.env);
+    crate::envvar::set(&env.env, &value.to_string_lossy())?;
+    let mut msg = format!("已设置 {} = {}（重启应用后生效）", env.env, value.display());
+    if let Some(o) = old {
+        msg.push_str(&format!("（原值 {o}）"));
+    }
+    Ok(msg)
+}
+
 /// 修复模式：目标数据还在、只是链接坏了/丢了时，**只重建链接，不复制数据**。
 ///
 /// 三种场景：

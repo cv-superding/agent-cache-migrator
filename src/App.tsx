@@ -61,6 +61,7 @@ export default function App() {
   const [log, setLog] = useState<string[]>([]);
   const [rolling, setRolling] = useState(false);
   const [repairing, setRepairing] = useState(false);
+  const [settingEnv, setSettingEnv] = useState(false);
   const [history, setHistory] = useState<{
     items: {
       ts: string;
@@ -261,6 +262,21 @@ export default function App() {
     }
   }
 
+  /** 用环境变量重定位（官方支持的 Agent 才有此入口）。 */
+  async function doSetEnv(id: string) {
+    setSettingEnv(true);
+    try {
+      const root = destRoot || drives?.defaultDestRoot || null;
+      const msg = await api.setEnv(id, root || null, false);
+      toast("已设置环境变量", msg);
+      await refreshHistory(allHistory);
+    } catch (e) {
+      toast("设置失败", String(e), true);
+    } finally {
+      setSettingEnv(false);
+    }
+  }
+
   // ---------------------------------------------------------------- 渲染
 
   const detected = agents.filter((a) => a.detected);
@@ -313,6 +329,7 @@ export default function App() {
               <StatusCard
                 a={cur}
                 repairing={repairing}
+                settingEnv={settingEnv}
                 onRepair={(id) => {
                   const a = agents.find((x) => x.id === id);
                   setConfirm({
@@ -326,6 +343,27 @@ export default function App() {
                       </>
                     ),
                     onOk: () => void doRepair(id),
+                  });
+                }}
+                onSetEnv={(id) => {
+                  const a = agents.find((x) => x.id === id);
+                  if (!a?.envRelocate) return;
+                  setConfirm({
+                    title: `用环境变量重定位？`,
+                    okText: "设置",
+                    body: (
+                      <>
+                        会设置用户级环境变量{" "}
+                        <span className="mono">{a.envRelocate.env} = {destRoot || "目标位置"}/{id}</span>
+                        ，重启应用后生效。
+                        <div className="note warn" style={{ marginTop: 8 }}>
+                          这是<b>持久的系统变更</b>（可在{" "}
+                          <span className="mono">acm env {id} --unset</span> 撤销）；
+                          同一程序有多个版本时会互相踩数据 —— 那种情况请继续用联接方式迁移。
+                        </div>
+                      </>
+                    ),
+                    onOk: () => void doSetEnv(id),
                   });
                 }}
               />
@@ -517,10 +555,14 @@ function StatusCard({
   a,
   onRepair,
   repairing,
+  settingEnv,
+  onSetEnv,
 }: {
   a: DetectedAgent;
   onRepair?: (id: string) => void;
   repairing?: boolean;
+  settingEnv?: boolean;
+  onSetEnv?: (id: string) => void;
 }) {
   const st = agentState(a);
   const shown = a.paths.filter((p) => p.kind !== "missing");
@@ -590,7 +632,18 @@ function StatusCard({
             )
           }
         />
-        {a.note && <Row k="提示" v={a.note} />}
+        {a.envRelocate && onSetEnv && st !== "absent" && (
+        <div style={{ marginTop: 11 }}>
+          <div className="note info" style={{ marginBottom: 8 }}>
+            该应用官方支持用环境变量 <span className="mono">{a.envRelocate.env}</span>{" "}
+            重定位数据目录 —— 比联接更干净（原路径不留任何东西）。
+          </div>
+          <button className="btn" disabled={settingEnv} onClick={() => onSetEnv(a.id)}>
+            {settingEnv ? "设置中…" : "用环境变量重定位"}
+          </button>
+        </div>
+      )}
+      {a.note && <Row k="提示" v={a.note} />}
       </div>
 
       {st === "moved" && (

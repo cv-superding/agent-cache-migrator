@@ -2,6 +2,14 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.7.0] - 2026-10-17
+
+### 新增
+
+- **检测并行化**：量体积改用 `std::thread::scope` 4 路并发（零新依赖）—— 18 个 Agent 串行量体积最坏要几分钟，现在约 1/4；结果按索引写回，界面顺序不变。
+- **macOS 更新器指纹**：Electron 更新器缓存补上 macOS 路径（`~/Library/Caches/<appId>-updater`），mac 上「装了没」的检测不再只依赖数据目录存在性。
+- **界面环境变量重定位入口**：配了 `env_relocate` 的 Agent（Codex / Claude Code）在状态卡片出现「用环境变量重定位」按钮 —— 设置前确认、说明持久变更与多版本互踩警告（`acm env` 的 GUI 版）。
+
 ## [0.6.0] - 2026-10-17
 
 ### 新增

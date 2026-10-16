@@ -195,6 +195,29 @@ async fn snapshots() -> Result<Vec<migrate::Snapshot>, String> {
     .map_err(|e| format!("列快照异常：{e}"))?
 }
 
+/// 设置/删除 Agent 官方支持的重定位环境变量（仅限配了 env_relocate 的）。
+#[tauri::command]
+async fn env_set(
+    agent_id: String,
+    dest_root: Option<String>,
+    unset: Option<bool>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let defs = agents::load(None)?;
+        let def = defs
+            .iter()
+            .find(|d| d.id == agent_id)
+            .ok_or_else(|| format!("注册表里没有 id = {agent_id}"))?;
+        migrate::env_relocate_apply(
+            def,
+            dest_root.as_deref().map(Path::new),
+            unset.unwrap_or(false),
+        )
+    })
+    .await
+    .map_err(|e| format!("设置环境变量异常：{e}"))?
+}
+
 /// 迁移历史（`history.jsonl`，新的在前；默认最近 15 条）。
 #[tauri::command]
 async fn history(all: Option<bool>) -> Result<Value, String> {
@@ -320,6 +343,7 @@ pub fn run() {
             repair,
             snapshots,
             history,
+            env_set,
             delete_snapshot,
             open_path,
             version,

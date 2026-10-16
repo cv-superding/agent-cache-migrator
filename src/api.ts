@@ -71,6 +71,20 @@ export function rollback(agentId: string): Promise<string> {
   return invoke("rollback", { agentId });
 }
 
+/** 设置/删除 Agent 官方支持的重定位环境变量（持久、用户级）。 */
+export function setEnv(
+  agentId: string,
+  destRoot: string | null,
+  unset: boolean,
+): Promise<string> {
+  if (DEMO) {
+    return Promise.resolve(
+      `已${unset ? "删除" : "设置"}环境变量（演示模式，没有真的动注册表）`,
+    );
+  }
+  return invoke("env_set", { agentId, destRoot, unset });
+}
+
 /** 修复模式：目标数据还在但链接坏了/丢了，只重建链接不复制数据。 */
 export function repair(
   agentId: string,
@@ -174,6 +188,7 @@ export const api = {
   migrateAgent,
   rollback,
   repair,
+  setEnv,
   snapshots,
   history,
   deleteSnapshot,
