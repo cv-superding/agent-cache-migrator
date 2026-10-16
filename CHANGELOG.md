@@ -2,6 +2,12 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.7.1] - 2026-10-17
+
+### 修正
+
+- **环境变量变更也记入迁移历史**：`acm env` / 界面「用环境变量重定位」的 set/unset 现在会追加 env 事件到 `history.jsonl`（带 `type` 字段区分 migrate/env）—— 此前改了用户级系统状态却无账可查；历史卡片按类型渲染。
+
 ## [0.7.0] - 2026-10-17
 
 ### 新增
