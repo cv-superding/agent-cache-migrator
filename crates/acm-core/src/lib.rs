@@ -3,6 +3,7 @@
 //! 零 GUI、零平台 UI 依赖，纯逻辑，可单测。分成四块：
 //!
 //! - [`agents`] —— Agent 注册表（`agents.toml`）的加载、合并与**检测**
+//! - [`globs`] —— 极简 glob（`skip` 字段的匹配规则）
 //! - [`paths`] —— 路径模板展开（`~` / `%APPDATA%` / `%LOCALAPPDATA%`）
 //! - [`fsutil`] —— 重解析点判定、联接目标、体积统计
 //! - [`locks`] —— **精确占用检测**（Windows Restart Manager：谁锁着这个目录）
@@ -15,6 +16,7 @@
 
 pub mod agents;
 pub mod fsutil;
+pub mod globs;
 pub mod locks;
 pub mod migrate;
 pub mod model;

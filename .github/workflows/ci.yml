@@ -85,6 +85,44 @@ jobs:
             exit 1
           fi
 
+  # ---------------------------------------------------------------- 内核（Windows）
+  #
+  # 🔴 Windows 是这个工具的主战场（robocopy / mklink /J / Restart Manager 全在这条路上），
+  #    但此前 CI 只跑 Linux —— Windows 的迁移主路径（复制 /XJ、校验、建联接、回滚）
+  #    全靠手工验证。补上这一趟：联接**不需要管理员权限**，windows runner 可以真跑
+  #    migrate.rs 里的端到端 roundtrip 测试。
+  core-windows:
+    name: 内核（Windows）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: "-D warnings"
+
+      - name: 跑单测（含 Windows 端到端迁移）
+        shell: bash
+        run: cargo test -p acm-core -p acm-cli --all-targets
+
+  # ---------------------------------------------------------------- clippy（观察期）
+  #
+  # lint 比 rustc 严得多，存量代码可能还有一批警告；直接 -D warnings 会把 CI 打红。
+  # 先以「报告但不阻塞」的方式跑起来，等存量警告清零后再并进 core job 转硬约束。
+  clippy:
+    name: clippy（观察）
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          # 覆盖 job 级的 -D warnings：clippy 自己的 lint 用 -W 门槛报告即可
+          rustflags: ""
+
+      - run: cargo clippy -p acm-core -p acm-cli --all-targets
+
   # ---------------------------------------------------------------- 前端
   frontend:
     name: 前端（类型 + 构建）

@@ -117,6 +117,9 @@ pub struct Plan {
     pub warnings: Vec<String>,
     /// 预计目标最终体积是否够放
     pub fits: bool,
+    /// 校验阶段跳过的 glob（来自 `agents.toml` 的 `skip` 字段）。
+    /// 复制仍会全量复制；只是这些条目**不参与「0 差异」收敛判定**。
+    pub skip: Vec<String>,
 }
 
 /// 生成计划。
@@ -194,12 +197,13 @@ pub fn plan(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<Plan, String
             fsutil::human(dest_existing.bytes)
         ));
     }
-    if def.env_relocate.is_some() {
-        warnings.push(
-            "这个 Agent 官方支持用环境变量重定位数据目录；当前走的是「搬目录 + 建联接」\
-             （对应用透明、更通用）。"
-                .to_string(),
-        );
+    if let Some(env) = &def.env_relocate {
+        warnings.push(format!(
+            "这个 Agent 官方支持用环境变量 {} 重定位数据目录（更干净、不留联接）。\
+             自动设置暂未实现，需要的话请手工设置该变量；\
+             当前将走「搬目录 + 建联接」（对应用透明、更通用）。",
+            env.env
+        ));
     }
 
     Ok(Plan {
@@ -214,6 +218,7 @@ pub fn plan(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<Plan, String
         blockers,
         warnings,
         fits,
+        skip: def.skip.clone(),
     })
 }
 
@@ -285,7 +290,7 @@ pub fn run(plan: &Plan, cb: &mut dyn FnMut(Progress)) -> MigrateReport {
         detail: "正在核对差异".into(),
         percent: Some(70),
     });
-    match imp::pending_count(&src, &dest) {
+    match imp::pending_count(&src, &dest, &plan.skip) {
         Ok(0) => r.steps.push(StepResult {
             name: "校验".into(),
             ok: true,
@@ -459,6 +464,11 @@ pub fn list_snapshots(defs: &[AgentDef]) -> Vec<Snapshot> {
 /// 删掉一个快照。`permanent = false` 时**暂不支持回收站**，会直接报错让调用方明确选择。
 ///
 /// ⚠️ 删掉之后这次迁移就**不能回滚**了 —— 界面上必须先跟用户确认。
+///
+/// 🔴 路径必须通过 [`validate_snapshot_path`] 的校验：名字符合快照约定、
+/// 且就躺在某个已知 Agent 数据目录的旁边。这个命令的底层是
+/// 「解 ACL → 清属性 → 递归删」，一旦接受任意路径就等于给了前端一个
+/// 「删任意目录」的原语 —— 校验是纵深防御，不是摆设。
 pub fn cleanup(snapshot: &Path, permanent: bool) -> Result<u64, String> {
     if !permanent {
         return Err(
@@ -467,7 +477,68 @@ pub fn cleanup(snapshot: &Path, permanent: bool) -> Result<u64, String> {
                 .to_string(),
         );
     }
+    let defs = crate::agents::load(None)?;
+    validate_snapshot_path(snapshot, &defs)?;
     imp::remove_dir_forced(snapshot)
+}
+
+/// 校验一个路径是不是「我们生成的快照」。
+///
+/// 两条判据（都要满足）：
+/// 1. 文件名形如 `<名字>.moved-YYYYMMDD-HHMMSS`（时间戳是 8 位数字 + `-` + 6 位数字）；
+/// 2. 它躺在**注册表里某个 Agent 数据目录的父目录**下，且前缀名与那个数据目录一致。
+///
+/// 独立成函数并接收 `defs` 参数，是为了能单测（不依赖本机装了哪些 Agent）。
+fn validate_snapshot_path(snapshot: &Path, defs: &[AgentDef]) -> Result<(), String> {
+    let Some(name) = snapshot
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+    else {
+        return Err(format!("路径没有文件名：{}", snapshot.display()));
+    };
+    let Some(idx) = name.find(SNAPSHOT_MARK) else {
+        return Err(format!(
+            "拒绝删除：{name} 不符合快照命名约定（缺少 {SNAPSHOT_MARK} 标记）"
+        ));
+    };
+    let ts = &name[idx + SNAPSHOT_MARK.len()..];
+    let ts_ok = ts.len() == 15
+        && ts.as_bytes()[8] == b'-'
+        && ts
+            .chars()
+            .enumerate()
+            .all(|(i, c)| i == 8 || c.is_ascii_digit());
+    if !ts_ok {
+        return Err(format!(
+            "拒绝删除：快照时间戳格式不对（应为 YYYYMMDD-HHMMSS），实际是「{ts}」"
+        ));
+    }
+
+    let Some(parent) = snapshot.parent() else {
+        return Err("拒绝删除：路径没有父目录".to_string());
+    };
+    for def in defs {
+        for tpl in &def.paths {
+            let Some(p) = paths::expand(tpl) else {
+                continue;
+            };
+            // 🔴 前缀必须带上 SNAPSHOT_MARK 边界：`.codex2.moved-…` 不能被
+            // 认成 `.codex` 的快照（`starts_with(".codex")` 是真，但那是另一个目录）
+            let prefix_ok = p.file_name().is_some_and(|n| {
+                let expected = format!("{}{}", n.to_string_lossy(), SNAPSHOT_MARK);
+                name.starts_with(&expected)
+            });
+            let parent_ok = p.parent().is_some_and(|pp| pp == parent);
+            if prefix_ok && parent_ok {
+                return Ok(());
+            }
+        }
+    }
+    Err(format!(
+        "拒绝删除：{} 不在任何已知 Agent 数据目录旁边 —— \
+         这可能是手工构造的路径，为防误删任意目录已拦截",
+        snapshot.display()
+    ))
 }
 
 // ============================================================ 内部工具（跨平台）
@@ -576,7 +647,10 @@ mod imp {
     }
 
     /// 还差多少个文件没搬过去（只数**源树里**的）。
-    pub fn pending_count(src: &Path, dst: &Path) -> Result<u64, String> {
+    ///
+    /// `skip`：校验阶段忽略的 glob（相对源根的路径命中即不计数）。
+    /// 复制阶段不带这些排除 —— 多搬无害，缺的只是「不必一致」的约束。
+    pub fn pending_count(src: &Path, dst: &Path, skip: &[String]) -> Result<u64, String> {
         let s = src.to_string_lossy().to_string();
         let d = dst.to_string_lossy().to_string();
         let mut args: Vec<&str> = vec![s.as_str(), d.as_str()];
@@ -587,11 +661,34 @@ mod imp {
 
         let out = run("robocopy", &args).map_err(|e| format!("调不起 robocopy：{e}"))?;
         let text = String::from_utf8_lossy(&out.stdout);
+        let root_prefix = norm_root_prefix(src);
         Ok(text
             .lines()
             .filter(|l| !l.trim().is_empty())
             .filter(|l| is_under_root(l, src))
+            // 校验排除：命中 skip glob 的相对路径不算「还没搬过去」
+            .filter(|l| {
+                // ⚠️ 必须先绑定成命名变量：`&norm(l)[..]` 是对临时值做索引切片，
+                // 临时值活不过这条 let 语句（索引表达式不享受生命周期延长），
+                // 直接写会让 rel 悬垂 —— E0716。
+                let full = norm(l);
+                let rel = &full[root_prefix.len()..];
+                !crate::globs::matches_any(Path::new(rel), skip)
+            })
             .count() as u64)
+    }
+
+    fn norm(s: &str) -> String {
+        s.trim()
+            .trim_start_matches(r"\\?\")
+            .replace('/', "\\")
+            .to_ascii_lowercase()
+    }
+
+    /// 归一化后的源根（不带尾分隔符），用于从清单行里剥出相对路径。
+    fn norm_root_prefix(root: &Path) -> String {
+        let r = norm(&root.to_string_lossy());
+        r.trim_end_matches('\\').to_string()
     }
 
     /// 🔴 只被 Windows 用到 ⇒ 必须 cfg，否则 mac/linux 上是死代码、
@@ -770,6 +867,109 @@ mod imp {
             let prefix = format!("{name}{SNAPSHOT_MARK}");
             assert_eq!(prefix, ".codex.moved-");
         }
+
+        fn scratch(name: &str) -> PathBuf {
+            let d = std::env::temp_dir().join(format!("acm-win-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&d);
+            std::fs::create_dir_all(&d).unwrap();
+            d
+        }
+
+        /// 端到端：复制（/XJ 跳过联接）→ 校验 → 快照 → 建联接 → 穿过联接验证 → 回滚。
+        ///
+        /// 🔴 Windows 是主战场，但这条主路径此前只有手工验证。建联接（`mklink /J`）
+        /// **不需要管理员权限**，所以这个测试在 CI 的 windows runner 上能真跑 ——
+        /// unix 那边的同款测试早已存在，这里补齐对等性。
+        #[test]
+        fn copy_verify_link_rollback_roundtrip() {
+            let base = scratch("rt");
+            let src = base.join("src");
+            let dst = base.join("dst");
+            std::fs::create_dir_all(src.join("sub")).unwrap();
+            std::fs::write(src.join("a.txt"), b"hello").unwrap();
+            std::fs::write(src.join("sub/b.bin"), vec![7u8; 4096]).unwrap();
+
+            // 造一个指向「外面」的目录联接 —— 复制时必须跳过它（/XJ 的契约）
+            let outside = base.join("outside");
+            std::fs::create_dir_all(&outside).unwrap();
+            std::fs::write(outside.join("must-not-be-copied.txt"), b"x").unwrap();
+            make_junction(&src.join("link-out"), &outside).unwrap();
+
+            // ① 复制
+            copy_tree(&src, &dst).unwrap();
+            assert!(dst.join("a.txt").exists());
+            assert!(dst.join("sub/b.bin").exists());
+            assert!(
+                !dst.join("link-out").exists(),
+                "源里的联接不该被复制/跟随（对齐 /XJ）"
+            );
+
+            // ② 校验：刚复制完应当收敛；skip 命中的条目不算数
+            assert_eq!(pending_count(&src, &dst, &[]).unwrap(), 0);
+            std::fs::write(src.join("logs.tmp"), b"junk").unwrap();
+            assert_eq!(
+                pending_count(&src, &dst, &["*.tmp".to_string()]).unwrap(),
+                0,
+                "skip 命中的文件不该参与收敛判定"
+            );
+            assert_eq!(pending_count(&src, &dst, &[]).unwrap(), 1);
+
+            // ③ 新增文件 → 增量复制 → 收敛
+            std::fs::write(src.join("c.txt"), b"new").unwrap();
+            assert_eq!(pending_count(&src, &dst, &[]).unwrap(), 2);
+            copy_tree(&src, &dst).unwrap();
+            assert_eq!(
+                pending_count(&src, &dst, &[]).unwrap(),
+                0,
+                "增量复制后应当收敛"
+            );
+
+            // ④ 快照 + 联接 + 穿过联接验证
+            let snap = rename_to_snapshot(&src).unwrap();
+            assert!(snap
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .contains(".moved-"));
+            make_junction(&src, &dst).unwrap();
+            assert!(verify_through_link(&src, &dst).unwrap() >= 3);
+            assert!(src.join("a.txt").exists(), "穿过联接读原路径也要拿到文件");
+
+            // ⑤ 摘联接（🔴 目标真实数据一个不能少）+ 回滚
+            remove_junction(&src).unwrap();
+            rename_back(&snap, &src).unwrap();
+            assert!(src.is_dir(), "回滚后应恢复成真实目录");
+            assert!(!fsutil::is_link(&src));
+            assert!(src.join("a.txt").exists());
+
+            let _ = std::fs::remove_dir_all(&base);
+            let _ = std::fs::remove_dir_all(&outside);
+        }
+
+        /// `remove_dir_forced` 的安全带：目录里如果躺着联接，
+        /// 删除时只摘联接本身，**绝不能把联接指向的真实数据删掉**。
+        #[test]
+        fn remove_dir_forced_never_deletes_through_reparse() {
+            let base = scratch("rmtree");
+            let victim = base.join("victim");
+            std::fs::create_dir_all(&victim).unwrap();
+            std::fs::write(victim.join("own.txt"), b"delete-me").unwrap();
+
+            // 联接指向外面的「必须幸存」目录
+            let survivor = base.join("survivor");
+            std::fs::create_dir_all(&survivor).unwrap();
+            std::fs::write(survivor.join("keep.txt"), b"keep-me").unwrap();
+            make_junction(&victim.join("link"), &survivor).unwrap();
+
+            remove_dir_forced(&victim).unwrap();
+            assert!(!victim.exists(), "victim 本体应被删除");
+            assert!(
+                survivor.join("keep.txt").exists(),
+                "🔴 联接指向的真实数据必须原样幸存"
+            );
+
+            let _ = std::fs::remove_dir_all(&base);
+        }
     }
 }
 
@@ -840,9 +1040,13 @@ mod imp {
     /// Windows 那边翻过的车（拿聚合指标当收敛条件，重试多少次都失败）。
     /// 大小不同必然要重传；「同尺寸改写」在**应用已退出**的前提下不会发生，
     /// 而迁移前的占用检测（`locks` + `procs`）就是为此把关的。
-    pub fn pending_count(src: &Path, dst: &Path) -> Result<u64, String> {
+    pub fn pending_count(src: &Path, dst: &Path, skip: &[String]) -> Result<u64, String> {
         let mut n = 0u64;
         walk(src, src, &mut |rel: &Path, md: &std::fs::Metadata| {
+            // skip 命中的条目不参与收敛判定（复制仍会带上）
+            if crate::globs::matches_any(rel, skip) {
+                return;
+            }
             let to = dst.join(rel);
             match std::fs::symlink_metadata(&to) {
                 Ok(d) if d.is_file() && d.len() == md.len() => {}
@@ -994,17 +1198,21 @@ mod imp {
             );
 
             // ② 校验：刚复制完应当收敛
-            assert_eq!(pending_count(&src, &dst).unwrap(), 0);
+            assert_eq!(pending_count(&src, &dst, &[]).unwrap(), 0);
 
             // ③ 新增一个文件 → 校验要能发现
             std::fs::write(src.join("c.txt"), b"new").unwrap();
-            assert_eq!(pending_count(&src, &dst).unwrap(), 1);
+            assert_eq!(pending_count(&src, &dst, &[]).unwrap(), 1);
 
             // ④ 再复制一次（增量）→ 应当收敛，且新文件确实到了目标
             //    （这条是补上的：早先只在 ③ 之后直接断言目标条目数，
             //     忘了 c.txt 还没被复制 —— 测试自己把这一步暴露了出来）
             copy_tree(&src, &dst).unwrap();
-            assert_eq!(pending_count(&src, &dst).unwrap(), 0, "增量复制后应当收敛");
+            assert_eq!(
+                pending_count(&src, &dst, &[]).unwrap(),
+                0,
+                "增量复制后应当收敛"
+            );
             assert!(dst.join("c.txt").exists(), "增量复制要把新文件带过去");
 
             // ⑤ 快照 + 链接 + 穿过链接验证
@@ -1040,7 +1248,33 @@ mod imp {
             std::fs::write(dst.join("diff.bin"), vec![1u8; 50]).unwrap(); // 大小不同
             std::fs::write(src.join("only-src.bin"), b"x").unwrap(); // 目标没有
 
-            assert_eq!(pending_count(&src, &dst).unwrap(), 2);
+            assert_eq!(pending_count(&src, &dst, &[]).unwrap(), 2);
+
+            let _ = std::fs::remove_dir_all(&base);
+        }
+
+        /// skip 命中的条目不参与收敛判定 —— `agents.toml` 里 `skip` 字段的契约。
+        #[test]
+        fn skip_globs_are_excluded_from_verification() {
+            let base = scratch("skip");
+            let src = base.join("s");
+            let dst = base.join("d");
+            std::fs::create_dir_all(src.join("logs")).unwrap();
+            std::fs::create_dir_all(&dst).unwrap();
+            // 数据文件：两边不一致，必须被算出来
+            std::fs::write(src.join("data.db"), vec![1u8; 10]).unwrap();
+            // 日志：目标里没有，但配了 skip 就不该计入
+            std::fs::write(src.join("logs/run.log"), b"log").unwrap();
+            std::fs::write(src.join("trace.log"), b"log").unwrap();
+
+            let skip = vec!["logs/**".to_string(), "**/*.log".to_string()];
+            assert_eq!(
+                pending_count(&src, &dst, &skip).unwrap(),
+                1,
+                "只有 data.db 该被算作待复制"
+            );
+            // 不带 skip 时 3 个都算
+            assert_eq!(pending_count(&src, &dst, &[]).unwrap(), 3);
 
             let _ = std::fs::remove_dir_all(&base);
         }
@@ -1076,7 +1310,7 @@ mod imp {
     pub fn copy_tree(_src: &Path, _dst: &Path) -> Result<(), String> {
         Err(MSG.to_string())
     }
-    pub fn pending_count(_src: &Path, _dst: &Path) -> Result<u64, String> {
+    pub fn pending_count(_src: &Path, _dst: &Path, _skip: &[String]) -> Result<u64, String> {
         Err(MSG.to_string())
     }
     pub fn rename_to_snapshot(_src: &Path) -> Result<PathBuf, String> {
@@ -1348,6 +1582,58 @@ mod tests {
         let p = std::env::temp_dir().join("acm-nonexistent-cleanup");
         // 不传永久删除 → 必须报错，而不是悄悄做了别的事
         assert!(cleanup(&p, false).is_err());
+    }
+
+    /// `delete_snapshot` 是「解 ACL + 清属性 + 递归删」的强破坏原语，
+    /// 路径校验是它唯一的安全带 —— 这几条用例就是安全带本身。
+    #[test]
+    fn snapshot_path_validation_gates_deletion() {
+        let defs = crate::agents::parse(
+            r#"
+schema_version = 1
+[[agent]]
+id = "codex"
+name = "Codex"
+paths = ["~/.codex"]
+"#,
+        )
+        .unwrap();
+        let home = paths::home_dir().unwrap();
+        let parent = home.clone(); // ~/.codex 的父目录就是 ~
+
+        // ✅ 合法快照：约定命名 + 在已知数据目录旁边
+        let good = parent.join(".codex.moved-20261008-221500");
+        assert!(validate_snapshot_path(&good, &defs).is_ok());
+
+        // ❌ 没有 .moved- 标记
+        assert!(validate_snapshot_path(&parent.join(".codex.bak"), &defs).is_err());
+
+        // ❌ 时间戳格式不对（缺横杠 / 位数不够 / 带尾巴）
+        assert!(validate_snapshot_path(&parent.join(".codex.moved-oops"), &defs).is_err());
+        assert!(
+            validate_snapshot_path(&parent.join(".codex.moved-20261008221500"), &defs).is_err()
+        );
+        assert!(
+            validate_snapshot_path(&parent.join(".codex.moved-20261008-2215-extra"), &defs)
+                .is_err()
+        );
+
+        // ❌ 名字像快照、时间戳也对，但不在任何已知 Agent 数据目录旁边
+        let defs2 = crate::agents::parse(
+            r#"
+schema_version = 1
+[[agent]]
+id = "codex"
+name = "Codex"
+paths = ["~/.nonexistent-agent-xyz"]
+"#,
+        )
+        .unwrap();
+        assert!(validate_snapshot_path(&good, &defs2).is_err());
+
+        // ❌ 名字前缀对不上（前缀相同但不是同一个数据目录）
+        let imposter = parent.join(".codex2.moved-20261008-221500");
+        assert!(validate_snapshot_path(&imposter, &defs).is_err());
     }
 
     #[test]

@@ -42,6 +42,15 @@ pub fn user_registry_path() -> Option<PathBuf> {
 /// 解析一份注册表文本。
 pub fn parse(text: &str) -> Result<Vec<AgentDef>, String> {
     let f: RegistryFile = toml::from_str(text).map_err(|e| format!("agents.toml 解析失败：{e}"))?;
+    // schema_version 现在只有 1 —— 校验它是为了将来 schema 变更时能明确报错，
+    // 而不是让新字段被静默忽略、老字段被静默误解。
+    if f.schema_version != 1 {
+        return Err(format!(
+            "agents.toml 的 schema_version = {}，本工具只认 1 \
+            （可能是配置来自更新版本的 AgentCache）",
+            f.schema_version
+        ));
+    }
     for a in &f.agents {
         validate(a)?;
     }
@@ -264,10 +273,7 @@ pub fn expand_glob(base: &Path, pattern: &str) -> Vec<PathBuf> {
         .collect();
     let star_last = segs.last().is_some_and(|s| *s == "*");
     // 中间通配不支持：明确不支持 > 悄悄给错结果
-    if segs[..segs.len().saturating_sub(1)]
-        .iter()
-        .any(|s| *s == "*")
-    {
+    if segs[..segs.len().saturating_sub(1)].contains(&"*") {
         return Vec::new();
     }
 
@@ -360,7 +366,13 @@ mod tests {
                 continue;
             }
             assert!(!d.how.is_empty(), "{} 判为已安装，就该给出依据", d.id);
-            assert!(d.paths.iter().any(|p| p.kind != "missing"));
+            // 🔴 只有「更新器指纹」命中时（装过但从没启动过），数据目录全是
+            // missing 是**正常**的 —— detected 的两个来源是并列的（见 detect_with）。
+            // 之前无脑断言 paths 非空，在这类机器上必然炸。
+            let via_updater_only = !d.updaters.is_empty();
+            if !via_updater_only {
+                assert!(d.paths.iter().any(|p| p.kind != "missing"));
+            }
         }
     }
 
@@ -401,6 +413,19 @@ name = "x"
 paths = ["%NOPE%/x"]
 "#;
         assert!(parse(bad_var).is_err(), "认不出来的变量应当被拒");
+    }
+
+    /// schema_version 不是摆设 —— 将来 schema 变更时必须明确报错而不是静默误解。
+    #[test]
+    fn schema_version_is_checked() {
+        let future = r#"
+schema_version = 2
+[[agent]]
+id = "ok"
+name = "x"
+paths = ["~/.x"]
+"#;
+        assert!(parse(future).is_err(), "未来版本的 schema 应当被明确拒绝");
     }
 
     #[test]
