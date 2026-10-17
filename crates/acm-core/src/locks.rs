@@ -10,6 +10,7 @@
 //! 🔴 平台分支**签名一致**（见 `fsutil` 顶部说明）：非 Windows 返回空，调用方自然退化成
 //! 「不做占用检查」，不需要在每个调用点写 cfg。
 
+use crate::fsutil;
 use std::path::{Path, PathBuf};
 
 /// 一个持有者进程。
@@ -66,16 +67,33 @@ pub fn holders_ex_dir(dir: &Path, max_entries: usize) -> (Vec<Holder>, bool) {
     holders_ex(&probe_paths(dir, max_entries))
 }
 
-/// 构造探测用的路径集合：**目录本身 + 直接子项**，最多 `max_entries` 个。
+/// 构造探测用的路径集合：**目录本身 + 递归子项**，广度优先，最多 `max_entries` 个。
 ///
-/// 为什么不递归整棵树：几十万文件逐个注册给 Restart Manager 要几十秒，
-/// 而「应用是否在跑」用顶层条目就够准 —— 应用锁的通常是 `SingletonLock` /
-/// `Cookies` / `*.db-shm` 这类位于顶层或一级子目录的东西。
+/// 🔴 为什么要递归：Restart Manager 注册**目录**时只查该目录本身的句柄，
+/// **不会递归查子文件** —— 而应用锁的几乎总是深层文件
+/// （如 `User\globalStorage\state.vscdb`、`Cache\Cache_Data\*`）。
+/// 只探一级会漏报，探整棵树又太慢 —— 所以 BFS + 上限，
+/// 并**跳过联接子目录**（不穿过联接去探测目标盘；迁移中途的 src 尤其不能穿）。
+/// 做法对齐 zennos0609-dotcom/AppDataMover 的 `ExpandToFiles`（cap 5000、跳联接）。
 pub fn probe_paths(dir: &Path, max_entries: usize) -> Vec<PathBuf> {
     let mut v = vec![dir.to_path_buf()];
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for e in rd.flatten().take(max_entries) {
-            v.push(e.path());
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(dir.to_path_buf());
+    while v.len() <= max_entries {
+        let Some(cur) = queue.pop_front() else { break };
+        let Ok(rd) = std::fs::read_dir(&cur) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            if v.len() > max_entries {
+                break;
+            }
+            let p = e.path();
+            v.push(p.clone());
+            // 真实子目录才继续下钻；联接/符号链接不递归
+            if p.is_dir() && !fsutil::is_link(&p) {
+                queue.push_back(p);
+            }
         }
     }
     v
@@ -136,8 +154,17 @@ mod imp {
             return (Vec::new(), false); // 🔴 检测不可用 ≠ 没有占用
         };
 
+        // 🔴 RM 的 RmRegisterResources **只接受文件路径** —— 混入目录会让整个
+        // 注册调用失败，而我们此前把失败静默当成「没有占用」，导致占用检测
+        // 一直在漏报（对齐 zennos0609-dotcom/AppDataMover：ExpandToFiles 只收文件）。
+        // 目录句柄（比如正在被删除的目录）RM 本来也看不到，过滤掉没有损失。
+        let files: Vec<PathBuf> = paths.iter().filter(|p| p.is_file()).cloned().collect();
+        if files.is_empty() {
+            return (Vec::new(), true); // 没有任何文件可注册 = 没有文件句柄可锁
+        }
+
         // 宽字符串必须活到 RmRegisterResources 调用结束 —— 所以先收集成 Vec，再取指针。
-        let wide: Vec<Vec<u16>> = paths.iter().map(|p| wide(&p.to_string_lossy())).collect();
+        let wide: Vec<Vec<u16>> = files.iter().map(|p| wide(&p.to_string_lossy())).collect();
         let ptrs: Vec<*const u16> = wide.iter().map(|w| w.as_ptr()).collect();
 
         let rc = unsafe {
@@ -151,9 +178,10 @@ mod imp {
                 std::ptr::null(),
             )
         };
-        // 注册失败（路径全不存在等）＝ 没有持有者，静默返回空。
+        // 注册失败 = 检测结果不可信 —— 如实报告「不可用」，让调用方提示用户
+        // 自行确认，而不是静默放行（旧版这里返回 (空, true)，是在静默漏报）。
         if rc != ERROR_SUCCESS {
-            return (Vec::new(), true);
+            return (Vec::new(), false);
         }
 
         let mut reasons: u32 = 0;
@@ -232,6 +260,62 @@ mod tests {
     #[test]
     fn holders_on_empty_input_is_empty() {
         assert!(holders(&[]).is_empty());
+    }
+
+    /// 🔴 回归（参考 AppDataMover 的 ExpandToFiles 后加的）：
+    /// 锁一个**二级子文件**， holders_of_dir 必须报出 —— RM 注册目录不递归查子文件，
+    /// 探测集合必须自己展开到深层。旧版只探一级，这个场景会漏报。
+    #[cfg(windows)]
+    #[test]
+    fn holders_detect_deep_file_lock() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let tmp = std::env::temp_dir().join(format!("acm-locks-deep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let deep = tmp.join("User").join("globalStorage");
+        std::fs::create_dir_all(&deep).unwrap();
+        let locked = deep.join("state.vscdb");
+        std::fs::write(&locked, b"x").unwrap();
+
+        // 自己独占锁住这个二级子文件（share_mode 0 = 不共享任何访问）
+        let _guard = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&locked)
+            .expect("独占打开失败");
+
+        let holders = holders_of_dir(&tmp, 2000);
+        assert!(
+            holders.iter().any(|h| h.pid == std::process::id() as u32),
+            "深层文件被独占锁住时必须检测到（自己 pid={}），实际：{holders:?}",
+            std::process::id()
+        );
+
+        drop(_guard);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// probe_paths 递归 + 上限 + 跳联接（unix 版，CI 的 Linux job 会跑到）。
+    #[cfg(not(windows))]
+    #[test]
+    fn probe_paths_recurses_with_cap() {
+        let tmp = std::env::temp_dir().join(format!("acm-locks-probe2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("a/b/c")).unwrap();
+        std::fs::write(tmp.join("a/b/c/deep.txt"), b"x").unwrap();
+        std::fs::write(tmp.join("top.txt"), b"x").unwrap();
+
+        let v = probe_paths(&tmp, 100);
+        assert!(
+            v.iter().any(|p| p.ends_with("deep.txt")),
+            "应当递归到深层：{v:?}"
+        );
+
+        // 上限生效
+        let capped = probe_paths(&tmp, 2);
+        assert_eq!(capped.len(), 3, "目录本身 + 2 个条目");
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

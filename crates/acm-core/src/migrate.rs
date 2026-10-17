@@ -238,7 +238,7 @@ pub fn plan(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<Plan, String
     }
 
     // ① 谁锁着源目录（精确判断，比按进程名猜可靠）
-    let (holders, locks_ok) = crate::locks::holders_ex_dir(src, 400);
+    let (holders, locks_ok) = crate::locks::holders_ex_dir(src, 2000);
     if !locks_ok {
         // 🔴 「检测不可用」不是「没有占用」—— 宁可啰嗦也不能静默放行
         warnings.push(

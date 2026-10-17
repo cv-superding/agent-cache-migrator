@@ -2,6 +2,18 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.9.2] - 2026-10-17
+
+### 修正（继续深读参考项目源码，揪出占用检测的两个严重 bug）
+
+对照 [`zennos0609-dotcom/AppDataMover`](https://github.com/zennos0609-dotcom/AppDataMover) 的 Restart Manager 实现（`NativeMethods.cs` 的 `ExpandToFiles` + 两段式 `RmGetList`），发现并修复：
+
+- **🔴 RM 注册混入目录导致整个检测静默失效**：`RmRegisterResources` **只接受文件路径**，混入目录会让注册调用失败——旧代码把失败静默当成「没有占用」并标记「可用」。这意味着**此前的占用检测（blockers 的「谁锁着目录」）从来没有真正工作过**。现在注册前过滤出文件；注册失败如实标记「不可用」，让界面提示用户自行确认（「明确失败优于静默」的落点）。
+- **🔴 探测深度不够漏报深层锁**：应用锁的几乎总是深层文件（`User\globalStorage\state.vscdb` 这类），旧探测只查目录本身 + 一级子项。现在广度优先递归（上限 2000、**跳过联接子目录**——不穿过联接去探测目标盘），plan 的探测上限同步 400 → 2000。做法对齐 AppDataMover 的 `ExpandToFiles`。
+- 新增回归测试：独占锁一个二级子文件（`share_mode(0)`），`holders_of_dir` 必须报出；probe_paths 递归/上限（unix 版给 Linux CI）。
+
+**说明**：此前测试 47 个全绿但没覆盖「深层文件锁」——这正是「自己从 0 写、没有参考」的盲区；AppDataMover 的 `ExpandToFiles` 存在本身就是这个坑的答案。占用检测失效的兜底是进程名匹配（procs），所以实际风险被部分对冲，但 blockers 的精确性现在才真正成立。
+
 ## [0.9.1] - 2026-10-17
 
 ### 修正与充实（针对「Agent 条目没有出处」的审查意见：真去读了参考项目的源码）

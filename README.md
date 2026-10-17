@@ -138,7 +138,7 @@ skip      = ["**/node_modules"]       # 可选：这些不进校验
 
 | 项目 | 借鉴点 |
 |---|---|
-| [`zennos0609-dotcom/AppDataMover`](https://github.com/zennos0609-dotcom/AppDataMover)（C#, MIT） | **占用检测用 Windows Restart Manager API**（精确到「谁锁着这个文件夹」，比按进程名匹配可靠）；**迁移建议分级** safe/normal/special/system；软件归因（读卸载注册表）；中英双语并跟随系统语言 |
+| [`zennos0609-dotcom/AppDataMover`](https://github.com/zennos0609-dotcom/AppDataMover)（C#, MIT） | **占用检测用 Windows Restart Manager API**（精确到「谁锁着这个文件夹」，比按进程名匹配可靠）；**迁移建议分级** safe/normal/special/system；软件归因（读卸载注册表）；中英双语并跟随系统语言。**0.9.2 实读源码后额外修正两处**：RM 的 `RmRegisterResources` 只收文件路径（混入目录整个注册失败）；注册前要把目录展开成文件（`ExpandToFiles`，上限 5000、跳联接）—— 我们的 `locks.rs` 据此修复了「深层文件锁漏报」 |
 | [`pratham15541/windows-appdata-migrator`](https://github.com/pratham15541/windows-appdata-migrator)（PowerShell） | 「先校验、再切换」的两段式流程 |
 | [`snomiao/junction-move`](https://github.com/snomiao/junction-move)（JS） | 「搬走 + 建联接回来」的最小实现，可作对照 |
 | [`hwl513782273/WorkBuddyUpdateBlocker`](https://github.com/hwl513782273/WorkBuddyUpdateBlocker)（Swift, macOS） | 同类项目的**免责与边界写法**：写清「依赖内部机制，厂商改版就可能失效」，并在应用升级后提示重新检查 |
