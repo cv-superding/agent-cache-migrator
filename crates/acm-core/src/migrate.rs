@@ -237,6 +237,16 @@ pub fn plan(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<Plan, String
         }
     }
 
+    // ⓪.5 源路径体检：系统关键目录拦下、云盘同步目录警告
+    //（参考 zhao-wuyan/directory-migration-tool 的 PathValidator 黑名单/云盘警告）
+    let (blocked_src, cloud_warn) = screen_source_path(src);
+    if let Some(b) = blocked_src {
+        blockers.push(b);
+    }
+    if let Some(w) = cloud_warn {
+        warnings.push(w);
+    }
+
     // ① 谁锁着源目录（精确判断，比按进程名猜可靠）
     let (holders, locks_ok) = crate::locks::holders_ex_dir(src, 2000);
     if !locks_ok {
@@ -334,6 +344,63 @@ pub fn plan(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<Plan, String
         large_files_capped: large_capped,
         skip: def.skip.clone(),
     })
+}
+
+/// 源路径体检（参考 zhao-wuyan/directory-migration-tool 的 `PathValidator`）：
+/// 返回 (blocker, warning)。
+///
+/// - **系统关键目录** → blocker：`C:\Windows`、`Program Files`、`/usr`、`/System` 这类
+///   出现在源路径里，说明模板配置错了或用户手滑，宁可拒绝也不动。
+/// - **云盘同步目录**（OneDrive/Dropbox/Google Drive/iCloud）→ warning：
+///   迁移会让云盘认为「文件全被删了」，轻则重新上传、重则同步冲突 —— 提醒用户先暂停同步。
+fn screen_source_path(src: &Path) -> (Option<String>, Option<String>) {
+    let sp = src.to_string_lossy().to_ascii_lowercase();
+
+    let blocked: &[&str] = if cfg!(windows) {
+        &[
+            "\\windows\\",
+            "\\program files",
+            "\\programdata\\microsoft",
+            "\\system volume information",
+        ]
+    } else {
+        &[
+            "/usr/",
+            "/etc/",
+            "/bin/",
+            "/sbin/",
+            "/system/",
+            "/private/var/",
+        ]
+    };
+    if blocked.iter().any(|b| sp.contains(b)) {
+        return (
+            Some(format!(
+                "源路径在系统关键目录下 —— 不允许迁移：{}（请检查 agents.toml 的 paths 配置）",
+                src.display()
+            )),
+            None,
+        );
+    }
+
+    const CLOUD: [&str; 5] = [
+        "onedrive",
+        "dropbox",
+        "google drive",
+        "googledrive",
+        "icloud",
+    ];
+    if CLOUD.iter().any(|c| sp.contains(c)) {
+        return (
+            None,
+            Some(
+                "源路径疑似位于云盘同步目录（OneDrive/Dropbox 等）—— 迁移后云盘会认为文件被删除，\
+                 可能触发重新同步或冲突；建议先暂停同步再迁移，或取消迁移"
+                    .to_string(),
+            ),
+        );
+    }
+    (None, None)
 }
 
 /// 统计 ≥ `threshold` 字节的大文件数。不跟随重解析点；达到上限就停（如实标记）。
@@ -2200,6 +2267,36 @@ paths = ["~/.nonexistent-agent-xyz"]
         // ❌ 名字前缀对不上（前缀相同但不是同一个数据目录）
         let imposter = parent.join(".codex2.moved-20261008-221500");
         assert!(validate_snapshot_path(&imposter, &defs).is_err());
+    }
+
+    /// 源路径体检：系统目录拦下、云盘警告、普通路径放行。
+    #[test]
+    fn screen_source_path_flags_system_and_cloud() {
+        // 系统关键目录（Windows 形态）
+        #[cfg(windows)]
+        {
+            let (b, w) = screen_source_path(Path::new("C:\\Windows\\System32\\config"));
+            assert!(b.is_some(), "Windows 目录应被拦下");
+            assert!(w.is_none());
+            let (b, _) = screen_source_path(Path::new("C:\\Program Files\\SomeApp\\data"));
+            assert!(b.is_some(), "Program Files 应被拦下");
+        }
+        // 系统关键目录（unix 形态，CI 的 Linux job 会跑到）
+        #[cfg(not(windows))]
+        {
+            let (b, w) = screen_source_path(Path::new("/etc/agentcache"));
+            assert!(b.is_some(), "/etc 应被拦下");
+            assert!(w.is_none());
+        }
+        // 云盘同步目录 → warning
+        let cloud = std::env::temp_dir().join("OneDrive").join("agentdata");
+        let (b, w) = screen_source_path(&cloud);
+        assert!(b.is_none(), "云盘只是警告不是拦截");
+        assert!(w.is_some(), "OneDrive 应触发警告");
+        // 普通路径放行
+        let plain = std::env::temp_dir().join("plain-agent");
+        let (b, w) = screen_source_path(&plain);
+        assert!(b.is_none() && w.is_none());
     }
 
     /// 修复模式全场景：断链重建 / noop / 链接缺失直建 / 真实目录拒绝。

@@ -2,6 +2,19 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.9.3] - 2026-10-17
+
+### 新增（继续深读 zhao-wuyan ★81 的核心服务源码）
+
+- **源路径体检**（对齐其 `PathValidator` 的黑名单/云盘警告）：
+  - **系统关键目录 blocker**：源路径含 `C:\Windows`、`Program Files`、`ProgramData\Microsoft`、`System Volume Information`（unix：`/usr`、`/etc`、`/bin`、`/sbin`、`/System`、`/private/var`）→ 直接拦下 —— 说明 `agents.toml` 配置错了，宁可拒绝也不动；
+  - **云盘同步目录 warning**：源路径含 OneDrive / Dropbox / Google Drive / iCloud → 警告「迁移后云盘认为文件被删，可能触发同步冲突」。
+  附单测（Windows/Linux 各覆盖）。另评估了其 `HandleHelper`（NtQuerySystemInformation 句柄枚举兜底，300 行 unsafe）：RM 已修复可用，收益低风险中，**暂不采纳**并在此记录。
+
+### 说明
+
+- 对照过的状态机（`MigrationStateDetector`）确认我们的等价覆盖：`Inconsistent`（联接存在目标缺失）= doctor 的断链检查；「复制中断可恢复」= 重跑 migrate 的增量补齐；`NeedsCleanup`（快照待清理）= 界面快照卡片。
+
 ## [0.9.2] - 2026-10-17
 
 ### 修正（继续深读参考项目源码，揪出占用检测的两个严重 bug）
