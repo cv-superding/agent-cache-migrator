@@ -209,6 +209,9 @@ export default function App() {
       setReport(r);
       if (r.ok) {
         toast(t("toastMigrated"), `${r.src} → ${r.dest}`);
+      } else if (r.error?.includes("已取消")) {
+        // 取消不是失败 —— 文案要区分开
+        toast("已取消", r.error ?? "");
       } else if (r.rolledBack) {
         toast(t("toastMigrateFailed"), r.error ?? "", true);
       } else {

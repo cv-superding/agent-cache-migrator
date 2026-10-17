@@ -792,10 +792,38 @@ pub fn rollback(def: &AgentDef, src: &Path) -> Result<String, String> {
         ));
     }
 
-    let mut rescued = String::new();
+    let mut msgs: Vec<String> = Vec::new();
     if fsutil::is_link(src) {
         // 迁移后新数据在联接目标里 —— 摘链接前先抢救
         if let Some(target) = fsutil::link_target(src).filter(|t| t.is_dir()) {
+            // 🔴 撤销环境变量（`--with-env` 迁移设置的）：变量仍指向目标盘的
+            // 旧副本，不撤的话回滚后应用会优先读变量 → 拿到**过期数据**。
+            // 只撤「恰好指向本次迁移目标」的变量 —— 用户自定义的其他值不动。
+            if let Some(env) = &def.env_relocate {
+                if let Some(cur) = crate::envvar::get(&env.env) {
+                    let norm = |s: &str| s.trim_end_matches(['\\', '/']).to_string();
+                    if norm(&cur).eq_ignore_ascii_case(&norm(&target.to_string_lossy())) {
+                        match crate::envvar::remove(&env.env) {
+                            Ok(()) => {
+                                let detail = format!("回滚时自动撤销（原指向 {cur}）");
+                                append_env_history(&def.id, &env.env, "unset", &detail);
+                                msgs.push(format!("已撤销环境变量 {}（原指向 {cur}）", env.env));
+                            }
+                            Err(e) => msgs.push(format!(
+                                "⚠ 环境变量 {} 撤销失败（{e}）—— 它仍指向 {cur}，\
+                                 请手工执行 acm env {} --unset",
+                                env.env, def.id
+                            )),
+                        }
+                    } else {
+                        msgs.push(format!(
+                            "⚠ 环境变量 {} 当前指向 {cur}（不是本次迁移目标），未自动撤销",
+                            env.env
+                        ));
+                    }
+                }
+            }
+
             let ts = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
             let name = target
                 .file_name()
@@ -804,12 +832,12 @@ pub fn rollback(def: &AgentDef, src: &Path) -> Result<String, String> {
             let rescue = target.with_file_name(format!("{name}.rescued-{ts}"));
             match rescue_changed_files(&target, &snap, &rescue) {
                 Ok((n, bytes)) if n > 0 => {
-                    rescued = format!(
-                        "；⚠ 迁移后新增/变更的 {} 个文件（{}）已先备份到 {}",
+                    msgs.push(format!(
+                        "⚠ 迁移后新增/变更的 {} 个文件（{}）已先备份到 {}",
                         n,
                         fsutil::human(bytes),
                         rescue.display()
-                    );
+                    ));
                 }
                 Ok(_) => {} // 没有新数据，直接回滚
                 Err(e) => {
@@ -822,13 +850,16 @@ pub fn rollback(def: &AgentDef, src: &Path) -> Result<String, String> {
         imp::remove_junction(src)?;
     }
     imp::rename_back(&snap, src)?;
-    Ok(format!(
-        "已回滚：{} → {}（agent {}）{}",
+    let mut msg = format!(
+        "已回滚：{} → {}（agent {}）",
         snap.display(),
         src.display(),
-        def.id,
-        rescued
-    ))
+        def.id
+    );
+    for m in &msgs {
+        msg.push_str(&format!("；{m}"));
+    }
+    Ok(msg)
 }
 
 /// 逐文件 SHA-256 校验：源树里每个文件与目标对应文件比对内容哈希。
@@ -2618,6 +2649,54 @@ processes = []
         );
 
         clear_cancel();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 🔴 回归：`--with-env` 迁移设置的变量在 rollback 时必须自动撤销 ——
+    /// 否则数据回滚到原位后，应用优先读变量会拿到目标盘的**过期副本**。
+    /// 搭一个完整的「已迁移」现场（数据 + 目标 + 联接 + 变量），回滚后断言变量消失。
+    #[cfg(windows)]
+    #[test]
+    fn rollback_unsets_env_var_pointing_at_target() {
+        let base = std::env::temp_dir().join(format!("acm-rbenv-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let src = base.join(".codex");
+        let dest = base.join("AgentCache").join("codex");
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(dest.join("data.bin"), vec![1u8; 64]).unwrap();
+
+        let defs = crate::agents::parse(
+            r#"
+schema_version = 1
+[[agent]]
+id = "codex"
+name = "Codex"
+paths = ["~/.codex"]
+processes = []
+[agent.env_relocate]
+env = "AC_TEST_ROLLBACK_VAR"
+"#,
+        )
+        .unwrap();
+        let def = &defs[0];
+        let var = &def.env_relocate.as_ref().unwrap().env;
+
+        // 现场：原目录已改名快照、联接已建、变量已指向目标（= with-env 迁移后的状态）
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("old.bin"), b"old").unwrap();
+        let _snapshot = imp::rename_to_snapshot(&src).expect("改名失败");
+        imp::make_junction(&src, &dest).unwrap();
+        crate::envvar::set(var, &dest.to_string_lossy()).unwrap();
+
+        // 回滚
+        let msg = rollback(def, &src).expect("回滚应成功");
+        assert!(msg.contains("已撤销环境变量"), "消息应提到撤销变量：{msg}");
+        assert_eq!(crate::envvar::get(var), None, "变量必须被撤销");
+        // 回滚后原路径 = 快照里的旧数据；迁移数据仍在目标盘（由 rescue/联接逻辑保证）
+        assert!(src.join("old.bin").exists(), "回滚后原路径应是快照数据");
+        assert!(dest.join("data.bin").exists(), "目标盘数据不应被破坏");
+
+        let _ = crate::envvar::remove(var);
         let _ = std::fs::remove_dir_all(&base);
     }
 
