@@ -148,6 +148,19 @@ skip      = ["**/node_modules"]       # 可选：这些不进校验
 | [`taod518/cursor-appdata-mover`](https://github.com/taod518/cursor-appdata-mover)（Python） | Cursor 数据在 **Roaming 与 Local 两侧**（`%APPDATA%\Cursor` + `%LOCALAPPDATA%\Cursor`）—— 已据此补全 cursor 条目的第二个路径 |
 | [`Saqoosha/ccmv`](https://github.com/Saqoosha/ccmv)（JS） | Claude Code `~/.claude`、Cursor 三平台路径（macOS `~/Library/Application Support/Cursor`、Linux `~/.config/Cursor`）交叉印证 |
 
+### 源码对照结论（五轮，截至 v0.9.4）
+
+| 对照项 | 结论 |
+|---|---|
+| 迁移五步流程 | AppDataMover / OPTOPIA / 我们三方一致；我们的快照永久保留 + 增量续传更稳 |
+| robocopy 参数 | 我们多 `/XJ`（AppDataMover 没加，是它的坑）、`/DCOPY:DAT`（比 OPTOPIA 的 `/DCOPY:T` 全）、`/MT:16` 已对齐 |
+| robocopy 退出码 | 0–7 成功 / ≥8 失败 —— 三方一致，我们实现正确 |
+| 占用检测 | Restart Manager 两段式 + 目录展开成文件（cap、跳联接）—— 已按 AppDataMover 修正 |
+| 校验 | robocopy `/L` 独立重数 0 差异（OPTOPIA 的逐文件路径+大小+mtime 等价） |
+| 状态机 | `MigrationStateDetector` 四态全部等价覆盖（detect + doctor） |
+| FreeMove（★2285） | 无校验/无快照/无回滚/不跳联接 —— 交叉印证本项目的流程更完整；其"同盘直接改名"优化不采纳（会破坏"永远有快照可回滚"的不变量） |
+| 社区目录库 | winapp2.ini（★1061）无 AI 应用条目 —— 条目库靠各应用专属项目 + 本项目 `agents.toml` |
+
 **条目来源与验证状态**（也写在 `agents.toml` 头部）：
 ✅ 本机实测（workbuddy 双版本、codex、claude、deepseek、cherry、npm-cache）；
 📄 官方文档（gemini-cli、lingma、env_relocate 变量）；
