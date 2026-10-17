@@ -165,6 +165,13 @@ async fn migrate_agent(
     .map_err(|e| format!("迁移任务异常：{e}"))?
 }
 
+/// 请求取消当前正在进行的迁移（复制循环在行间响应；已复制的部分保留可续传）。
+#[tauri::command]
+async fn cancel_migrate() -> Result<(), String> {
+    migrate::request_cancel();
+    Ok(())
+}
+
 /// 回滚某个 Agent（把快照改回原位）。
 #[tauri::command]
 async fn rollback(agent_id: String) -> Result<String, String> {
@@ -359,6 +366,7 @@ pub fn run() {
             drives,
             plan,
             migrate_agent,
+            cancel_migrate,
             rollback,
             repair,
             snapshots,

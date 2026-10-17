@@ -2,6 +2,21 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.10.0] - 2026-10-18
+
+### 新增
+
+- **迁移取消**（对齐 AppDataMover 的 CancellationToken 设计）：GUI 执行卡片在迁移中出现「取消」按钮（`cancel_migrate` 命令）；核心用全局取消标记，复制循环在每行输出之间响应，命中即杀掉 robocopy 子进程。**取消 ≠ 失败**：已复制的部分保留，重新执行自动续传；报告步骤里明确说明。
+- **可选 SHA-256 哈希校验**（对齐 OPTOPIA 的 `-VerifyHash`）：CLI `acm migrate --verify-hash` 或 `RunOptions::verify_hash` —— 校验阶段在「0 差异」之外逐文件计算 SHA-256 与目标比对（字节级一致，比 robocopy `/L` 的大小+时间戳更严）。**手写纯 Rust SHA-256**（零依赖哲学的延续，~150 行），FIPS 180-4 标准测试向量 + 流式分块一致性 + 文件哈希三重测试锁死正确性；64KB 块流式读取，不整读进内存。大目录慢，所以是选项不是默认。
+
+### 变更
+
+- CLI `migrate` 新增 `--verify-hash`；核心 `run` 拆出 `run_with_options`（`run` 保持兼容）。
+
+### 测试
+
+- 新增 4 个：SHA-256 FIPS 向量 / 流式一致性 / 文件哈希、取消中止 + 哈希校验联动（串行验证，避免全局标记并行竞争）。
+
 ## [0.9.4] - 2026-10-18
 
 ### 新增（第四轮源码对照：AppDataMover `Mover.cs` 全文 + OPTOPIA `AppDataMigrate.ps1` 流水线）

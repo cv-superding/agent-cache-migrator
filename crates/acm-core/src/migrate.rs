@@ -473,7 +473,46 @@ pub fn default_dest_root() -> Option<PathBuf> {
 /// —— 迁移是有副作用的操作，事后要能回答「什么时候对哪个目录做过什么」
 /// （借鉴 OPTOPIA 的迁移状态清单）。写入失败不影响迁移本身。
 pub fn run(plan: &Plan, cb: &mut dyn FnMut(Progress)) -> MigrateReport {
-    let rep = run_inner(plan, cb);
+    run_with_options(plan, cb, RunOptions::default())
+}
+
+/// 迁移的执行选项。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RunOptions {
+    /// 校验阶段在「0 差异」之外**逐文件计算 SHA-256** 并与目标比对 ——
+    /// 更严但大目录很慢，做成可选项（对齐 OPTOPIA 的 `-VerifyHash`）。
+    pub verify_hash: bool,
+}
+
+/// 全局取消开关（GUI 的「取消」按钮 / `cancel_migrate` 命令置位）。
+/// 一次只跑一个迁移 —— 简单且够用；置位后在复制循环的每次读行之间生效。
+static CANCELLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 请求取消当前迁移（若有）。取消点：复制循环的每行输出之间。
+pub fn request_cancel() {
+    CANCELLED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// 清除取消标记（下次迁移开始前调用方应清理）。
+pub fn clear_cancel() {
+    CANCELLED.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// 取消时 copy 阶段返回的固定错误文案（调用方据此区分「取消」与「失败」）。
+pub const CANCELLED_MSG: &str = "迁移已取消（目标盘已复制的部分保留，重新执行会自动续传）";
+
+fn is_cancelled() -> bool {
+    CANCELLED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// 带 options 的执行入口（`run` 的全参数版）。
+pub fn run_with_options(
+    plan: &Plan,
+    cb: &mut dyn FnMut(Progress),
+    opts: RunOptions,
+) -> MigrateReport {
+    clear_cancel();
+    let rep = run_inner(plan, cb, opts);
     append_history(&rep, &plan.agent_id);
     rep
 }
@@ -530,7 +569,7 @@ fn append_history_line(line: &serde_json::Value) {
     }
 }
 
-fn run_inner(plan: &Plan, cb: &mut dyn FnMut(Progress)) -> MigrateReport {
+fn run_inner(plan: &Plan, cb: &mut dyn FnMut(Progress), opts: RunOptions) -> MigrateReport {
     let src = PathBuf::from(&plan.src);
     let dest = PathBuf::from(&plan.dest);
     let mut r = MigrateReport::new(&src, &dest);
@@ -577,10 +616,15 @@ fn run_inner(plan: &Plan, cb: &mut dyn FnMut(Progress)) -> MigrateReport {
             detail: "复制完成（只补不删）".into(),
         }),
         Err(e) => {
+            let detail = if e == CANCELLED_MSG {
+                "已取消 —— 目标盘已复制的部分保留，重新执行会自动续传".to_string()
+            } else {
+                e.clone()
+            };
             r.steps.push(StepResult {
                 name: "复制".into(),
                 ok: false,
-                detail: e.clone(),
+                detail,
             });
             return r.fail(e);
         }
@@ -593,11 +637,31 @@ fn run_inner(plan: &Plan, cb: &mut dyn FnMut(Progress)) -> MigrateReport {
         percent: Some(70),
     });
     match imp::pending_count(&src, &dest, &plan.skip) {
-        Ok(0) => r.steps.push(StepResult {
-            name: "校验".into(),
-            ok: true,
-            detail: "源里已无待复制文件（0 差异）".into(),
-        }),
+        Ok(0) => {
+            // 可选：逐文件 SHA-256（--verify-hash / RunOptions::verify_hash）。
+            // 大目录很慢 —— 所以是选项而不是默认。
+            if opts.verify_hash {
+                cb(Progress {
+                    step: "verifying".into(),
+                    detail: "正在逐文件比对 SHA-256（大目录需要一些时间）…".into(),
+                    percent: None,
+                });
+                if let Err(e) = hash_compare_tree(&src, &dest, &plan.skip, cb) {
+                    r.steps.push(StepResult {
+                        name: "校验".into(),
+                        ok: false,
+                        detail: e.clone(),
+                    });
+                    // 哈希不一致：副本无效。半成品保留（下次重跑会重新覆盖复制）。
+                    return r.fail(format!("SHA-256 校验失败：{e}"));
+                }
+            }
+            r.steps.push(StepResult {
+                name: "校验".into(),
+                ok: true,
+                detail: "源里已无待复制文件（0 差异）".into(),
+            })
+        }
         Ok(n) => {
             let msg = format!(
                 "校验没过：源里还有 {n} 个文件没搬过去。\
@@ -765,6 +829,60 @@ pub fn rollback(def: &AgentDef, src: &Path) -> Result<String, String> {
         def.id,
         rescued
     ))
+}
+
+/// 逐文件 SHA-256 校验：源树里每个文件与目标对应文件比对内容哈希。
+/// 比 robocopy `/L`（大小 + 时间戳）更严 —— 字节级一致。跳过联接与 skip glob。
+fn hash_compare_tree(
+    src: &Path,
+    dest: &Path,
+    skip: &[String],
+    cb: &mut dyn FnMut(Progress),
+) -> Result<(), String> {
+    let mut stack = vec![src.to_path_buf()];
+    let mut checked: u64 = 0;
+    while let Some(dir) = stack.pop() {
+        if is_cancelled() {
+            return Err(CANCELLED_MSG.to_string());
+        }
+        let rd = std::fs::read_dir(&dir).map_err(|e| format!("读 {} 失败：{e}", dir.display()))?;
+        for entry in rd.flatten() {
+            if is_cancelled() {
+                return Err(CANCELLED_MSG.to_string());
+            }
+            let p = entry.path();
+            if fsutil::is_link(&p) {
+                continue; // 不跟进去
+            }
+            let md = std::fs::symlink_metadata(&p).map_err(|e| format!("{p:?}：{e}"))?;
+            if md.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            let rel = p
+                .strip_prefix(src)
+                .map_err(|_| "内部错误：strip_prefix 失败".to_string())?;
+            if crate::globs::matches_any(rel, skip) {
+                continue;
+            }
+            let dst_file = dest.join(rel);
+            let a = crate::hash::sha256_file(&p)?;
+            let b = crate::hash::sha256_file(&dst_file)
+                .map_err(|_| format!("目标侧缺失 {:?}（复制不完整）", rel))?;
+            if a != b {
+                return Err(format!("{rel:?} 两侧内容不一致"));
+            }
+            checked += 1;
+            if checked.is_multiple_of(1000) {
+                cb(Progress {
+                    step: "verifying".into(),
+                    detail: format!("SHA-256 已比对 {checked} 个文件…"),
+                    percent: None,
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 /// 把「迁移后新增/变更」的文件从 `target` 复制到 `rescue_dir`。
@@ -1230,6 +1348,11 @@ mod imp {
         let mut buf: Vec<u8> = Vec::new();
         let mut reader = IoBufReader::new(stdout);
         loop {
+            // 🔴 取消点：每读一行检查一次 —— 命中就杀掉 robocopy 子进程再返回
+            if super::is_cancelled() {
+                let _ = child.kill();
+                return Err(super::CANCELLED_MSG.to_string());
+            }
             buf.clear();
             match reader.read_until(b'\n', &mut buf) {
                 Ok(0) => break, // EOF
@@ -1646,6 +1769,9 @@ mod imp {
         n: &mut u64,
         on_file: &mut dyn FnMut(u64),
     ) -> std::io::Result<()> {
+        if is_cancelled() {
+            return Err(std::io::Error::other(CANCELLED_MSG));
+        }
         std::fs::create_dir_all(dst)?;
         for entry in std::fs::read_dir(src)? {
             let entry = entry?;
@@ -2434,6 +2560,65 @@ processes = []
         ))
         .expect("应当能读到系统盘的文件系统");
         assert_eq!(fs.to_ascii_uppercase(), "NTFS");
+    }
+
+    /// 🔴 取消 + 哈希校验联动：置位后 copy_tree 中止并返回取消文案；
+    /// 清除标记后 hash_compare_tree 正常工作（两者共用全局取消标记，
+    /// 必须串行验证 —— 并行测试会互相干扰）。
+    /// macOS 的 imp 是占位实现，跳过取消断言。
+    #[test]
+    fn cancel_flag_and_hash_verification() {
+        // 用项目 target/ 而不是 %TEMP% —— 某些沙盒环境会干扰 %TEMP% 里的新建目录
+        // （create 成功后 write 却 NotFound），而 target/ 是 cargo 自己频繁写的目录。
+        let temp = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("acm-tests");
+        let pid = std::process::id();
+        let mut setup = None;
+        for attempt in 0..3 {
+            let base = temp.join(format!("acm-mt-{pid}-{attempt}"));
+            let src = base.join("src");
+            let dst = base.join("dst");
+            if std::fs::create_dir_all(&src).is_err() {
+                continue;
+            }
+            if std::fs::create_dir_all(&dst).is_err() {
+                continue;
+            }
+            if std::fs::write(src.join("f.txt"), b"original").is_err() {
+                continue;
+            }
+            if std::fs::write(dst.join("f.txt"), b"original").is_ok() {
+                setup = Some((base, src, dst));
+                break;
+            }
+        }
+        let (base, src, dst) = setup.expect("临时目录连续 3 次创建失败（环境异常）");
+
+        // ① 置位取消 → copy_tree 中止
+        request_cancel();
+        #[cfg(any(windows, all(unix, not(target_os = "macos"))))]
+        {
+            let r = imp::copy_tree(&src, &base.join("dst2"), &mut |_| {});
+            let msg = r.expect_err("取消置位后必须中止");
+            assert!(msg.contains(CANCELLED_MSG), "应返回取消文案，实际：{msg}");
+        }
+        clear_cancel();
+
+        // ② 清除后：哈希一致 → 通过
+        let noop = &mut |_p: Progress| {};
+        hash_compare_tree(&src, &dst, &[], noop).expect("清除取消标记后应通过");
+
+        // ③ 目标被篡改 → 报不一致
+        std::fs::write(dst.join("f.txt"), b"tampered!").unwrap();
+        let err = hash_compare_tree(&src, &dst, &[], noop).expect_err("内容不一致必须报错");
+        assert!(
+            err.contains("内容不一致") || err.contains("f.txt"),
+            "实际：{err}"
+        );
+
+        clear_cancel();
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

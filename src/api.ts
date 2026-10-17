@@ -107,6 +107,11 @@ export function repair(
   return invoke("repair", { agentId, destRoot });
 }
 
+export function cancelMigrate(): Promise<void> {
+  if (DEMO) return Promise.resolve();
+  return invoke("cancel_migrate");
+}
+
 export function snapshots(): Promise<Snapshot[]> {
   if (DEMO) return Promise.resolve(demoData.SNAPSHOTS);
   return invoke("snapshots");
@@ -190,6 +195,7 @@ export const api = {
   drives,
   plan,
   migrateAgent,
+  cancelMigrate,
   rollback,
   repair,
   setEnv,

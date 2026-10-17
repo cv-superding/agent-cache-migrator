@@ -19,6 +19,7 @@ pub mod doctor;
 pub mod envvar;
 pub mod fsutil;
 pub mod globs;
+pub mod hash;
 pub mod locks;
 pub mod migrate;
 pub mod model;

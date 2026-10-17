@@ -390,6 +390,12 @@ export default function App() {
                 progress={progress}
                 report={report}
                 log={log}
+                onCancel={() => {
+                  void api
+                    .cancelMigrate()
+                    .then(() => toast("已请求取消", "复制中的部分会保留，重跑可续传"))
+                    .catch((e) => toast("取消失败", String(e), true));
+                }}
                 onRun={() => {
                   if (!plan || plan.blockers.length) return;
                   setConfirm({
@@ -991,8 +997,9 @@ function RunCard(props: {
   report: MigrateReport | null;
   log: string[];
   onRun: () => void;
+  onCancel: () => void;
 }) {
-  const { plan, running, progress, report, log, onRun } = props;
+  const { plan, running, progress, report, log, onRun, onCancel } = props;
   const can = !!plan && plan.blockers.length === 0 && !running;
 
   const doneSteps = new Set((report?.steps ?? []).filter((s) => s.ok).map((s) => nameToStep(s.name)));
@@ -1011,6 +1018,11 @@ function RunCard(props: {
             t("startMigrate")
           )}
         </button>
+        {running && (
+          <button className="btn" onClick={onCancel}>
+            取消
+          </button>
+        )}
         <span style={{ color: "var(--muted)", fontSize: 12 }}>
           {running
             ? "不要关闭应用，也不要打开被迁移的 Agent"

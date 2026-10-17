@@ -16,6 +16,7 @@ acm —— AgentCache 命令行
   acm migrate <id> [选项]    执行迁移（复制 → 校验 → 快照 → 联接，失败自动回滚）
                             --with-env：迁移成功后顺带设置官方重定位环境变量
                             （联接 + 变量双保险；仅限配了 env_relocate 的 Agent）
+                            --verify-hash：校验阶段逐文件比对 SHA-256（更严但慢）
   acm rollback <id> [--yes]  回滚：把快照改回原位（迁移后新数据会先备份到恢复目录）
   acm repair <id> [选项]     修复：目标数据还在但链接坏了/丢了，只重建链接不复制数据
   acm env <id> [选项]        设置/删除 Agent 官方支持的重定位环境变量（仅限配了 env_relocate 的）
@@ -455,13 +456,18 @@ fn cmd_migrate(args: &[String]) -> Result<(), String> {
         if plans.len() > 1 && !json {
             println!("\n── [{}/{}] {}", i + 1, plans.len(), p.src);
         }
-        let rep = migrate::run(p, &mut |pr| {
-            // 进度走 stderr：stdout 留给最终报告/JSON，方便管道
-            if !json {
-                let pct = pr.percent.map(|p| format!(" {p}%")).unwrap_or_default();
-                eprintln!("[{:>14}] {}{}", pr.step, pr.detail, pct);
-            }
-        });
+        let verify_hash = args.iter().any(|a| a == "--verify-hash");
+        let rep = migrate::run_with_options(
+            p,
+            &mut |pr| {
+                // 进度走 stderr：stdout 留给最终报告/JSON，方便管道
+                if !json {
+                    let pct = pr.percent.map(|p| format!(" {p}%")).unwrap_or_default();
+                    eprintln!("[{:>14}] {}{}", pr.step, pr.detail, pct);
+                }
+            },
+            migrate::RunOptions { verify_hash },
+        );
         let ok = rep.ok;
         if json {
             reports.push(rep.clone());
