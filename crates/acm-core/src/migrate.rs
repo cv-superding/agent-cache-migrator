@@ -1769,8 +1769,8 @@ mod imp {
         n: &mut u64,
         on_file: &mut dyn FnMut(u64),
     ) -> std::io::Result<()> {
-        if is_cancelled() {
-            return Err(std::io::Error::other(CANCELLED_MSG));
+        if super::is_cancelled() {
+            return Err(std::io::Error::other(super::CANCELLED_MSG));
         }
         std::fs::create_dir_all(dst)?;
         for entry in std::fs::read_dir(src)? {
