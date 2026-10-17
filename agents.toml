@@ -162,6 +162,44 @@ processes = ["gemini*"]
 note     = "CLI 无常驻进程，但正在跑的会话会持续写。"
 
 
+[[agent]]
+id       = "lmstudio"
+name     = "LM Studio"
+vendor   = "LM Studio"
+kind     = "generic"
+class    = "normal"
+paths    = ["~/.lmstudio"]
+processes = ["LM Studio.exe"]
+
+[[agent]]
+id       = "ollama"
+name     = "Ollama"
+vendor   = "Ollama"
+kind     = "cli"
+class    = "safe"
+paths    = ["~/.ollama"]
+processes = ["ollama*"]
+note     = "模型文件是大头；正在跑的模型进程会占用 models 目录，迁移前先 ollama stop。"
+
+[[agent]]
+id       = "chatbox"
+name     = "Chatbox"
+vendor   = "Chatbox"
+kind     = "electron"
+class    = "normal"
+paths    = ["%APPDATA%/Chatbox"]
+processes = ["Chatbox.exe"]
+
+[[agent]]
+id       = "jan"
+name     = "Jan"
+vendor   = "Jan"
+kind     = "electron"
+class    = "normal"
+paths    = ["%APPDATA%/Jan"]
+processes = ["Jan.exe"]
+
+
 # ───────────────────────────── 通用工具 ─────────────────────────────
 
 [[agent]]

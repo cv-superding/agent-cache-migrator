@@ -14,6 +14,8 @@ acm —— AgentCache 命令行
   acm detect [选项]          检测本机装了哪些 Agent  acm list                   列出注册表里的 Agent（不检测）
   acm plan <id> [--dest <根>]  为某个 Agent 生成迁移计划（**不动任何文件**）
   acm migrate <id> [选项]    执行迁移（复制 → 校验 → 快照 → 联接，失败自动回滚）
+                            --with-env：迁移成功后顺带设置官方重定位环境变量
+                            （联接 + 变量双保险；仅限配了 env_relocate 的 Agent）
   acm rollback <id> [--yes]  回滚：把快照改回原位（迁移后新数据会先备份到恢复目录）
   acm repair <id> [选项]     修复：目标数据还在但链接坏了/丢了，只重建链接不复制数据
   acm env <id> [选项]        设置/删除 Agent 官方支持的重定位环境变量（仅限配了 env_relocate 的）
@@ -448,6 +450,7 @@ fn cmd_migrate(args: &[String]) -> Result<(), String> {
 
     let mut reports: Vec<migrate::MigrateReport> = Vec::new();
     let mut any_failed = false;
+    let with_env = args.iter().any(|a| a == "--with-env");
     for (i, p) in plans.iter().enumerate() {
         if plans.len() > 1 && !json {
             println!("\n── [{}/{}] {}", i + 1, plans.len(), p.src);
@@ -486,6 +489,14 @@ fn cmd_migrate(args: &[String]) -> Result<(), String> {
         if !ok {
             any_failed = true;
             break; // 逐目录顺序迁：前一个失败，后面的原地不动
+        }
+    }
+
+    // 🔴 --with-env：全部迁移成功后，顺带设置官方重定位环境变量。
+    // 联接 + 变量双保险 —— 数据可从两条路访问；unset 变量也还有联接兜底。
+    if with_env && !any_failed {
+        if let Err(e) = migrate::env_relocate_apply(def, Some(&dest_root), false) {
+            eprintln!("⚠ 环境变量设置失败（迁移本身已成功，不影响使用）：{e}");
         }
     }
 

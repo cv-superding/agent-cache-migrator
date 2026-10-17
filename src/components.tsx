@@ -5,7 +5,8 @@
 
 import type { ReactNode } from "react";
 import type { DetectedAgent } from "./types";
-import { agentState, human, stateLabel } from "./types";
+import { agentState, human } from "./types";
+import { t, useLang, LangSwitch, stateLabelL } from "./i18n";
 
 // ---------------------------------------------------------------- 卡片
 
@@ -50,6 +51,7 @@ export function Sidebar({
 }) {
   const present = agents.filter((a) => a.detected);
   const absent = agents.filter((a) => !a.detected);
+  useLang(); // 语言切换时重渲染
 
   return (
     <aside className="side">
@@ -57,13 +59,13 @@ export function Sidebar({
         <div className="logo">⬒</div>
         <div>
           <b>AgentCache</b>
-          <span>Agent 缓存迁移器</span>
+          <span>{t("brandSub")}</span>
         </div>
       </div>
 
       <div className="nav">
         <div className="navlabel">
-          检测到 {present.length} 个 Agent
+          {t("detectedCount", { n: present.length })}
           {scanning && (
             <>
               {" "}
@@ -74,7 +76,7 @@ export function Sidebar({
 
         {present.length === 0 && !scanning && (
           <div className="opt" style={{ padding: "8px 9px", color: "var(--muted)" }}>
-            没有检测到任何 Agent。
+            {t("noneDetected")}
           </div>
         )}
 
@@ -92,14 +94,18 @@ export function Sidebar({
             <span className="sz">{a.total.bytes > 0 ? human(a.total.bytes) : ""}</span>
             <span
               className={`dot ${a.running.length > 0 ? "running" : agentState(a)}`}
-              title={a.running.length > 0 ? `运行中：${a.running.join(", ")}` : stateLabel(agentState(a))}
+              title={
+                a.running.length > 0
+                  ? t("runningTip", { list: a.running.join(", ") })
+                  : stateLabelL(agentState(a))
+              }
             />
           </button>
         ))}
 
         {absent.length > 0 && (
           <>
-            <div className="navlabel">未安装（{absent.length}）</div>
+            <div className="navlabel">{t("notInstalled", { n: absent.length })}</div>
             {absent.map((a) => (
               <button
                 key={a.id}
@@ -120,8 +126,9 @@ export function Sidebar({
 
       <div className="sidefoot">
         <button className="btn sm" onClick={onRescan} disabled={scanning}>
-          {scanning ? "扫描中…" : "重新扫描"}
+          {scanning ? t("scanning") : t("rescan")}
         </button>
+        <LangSwitch />
         <span className="sp" />
         {version && <span className="mono">v{version}</span>}
       </div>
@@ -192,7 +199,7 @@ export function Confirm({
           }}
         >
           <button className="btn" onClick={onCancel}>
-            取消
+            {t("cancel")}
           </button>
           {extra && (
             <button

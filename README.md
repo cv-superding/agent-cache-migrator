@@ -221,6 +221,7 @@ acm                        # 交互式向导（不用读文档：编号迁移 / 
 acm detect                 # 检测本机 Agent（--json 给脚本用）
 acm plan codex             # 生成迁移计划 —— **不动任何文件**
 acm migrate codex --dest D:\AgentCache --yes   # 执行迁移（多目录 Agent 逐个迁，失败即停）
+                               # --with-env：成功后顺带设置官方重定位环境变量（双保险）
 acm rollback codex         # 回滚：快照改回原位（迁移后新数据先备份到恢复目录）
 acm repair codex           # 修复：目标数据还在但链接坏了，只重建链接
 acm doctor                 # 体检：断链 / 运行中 / 快照脏状态 / 孤儿快照 + 修复命令

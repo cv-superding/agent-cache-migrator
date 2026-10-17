@@ -53,7 +53,11 @@ export function plan(agentId: string, destRoot: string): Promise<Plan> {
   return invoke("plan", { agentId, destRoot });
 }
 
-export function migrateAgent(agentId: string, destRoot: string): Promise<MigrateReport> {
+export function migrateAgent(
+  agentId: string,
+  destRoot: string,
+  withEnv = false,
+): Promise<MigrateReport> {
   if (DEMO) {
     // 播放一遍进度，让界面上的步骤条和日志真的动起来
     demoData.PROGRESS_SEQ.forEach((p, i) => {
@@ -63,7 +67,7 @@ export function migrateAgent(agentId: string, destRoot: string): Promise<Migrate
       setTimeout(() => r({ ...demoData.REPORT, src: demoData.demoPlan(agentId, destRoot).src }), 2400),
     );
   }
-  return invoke("migrate_agent", { agentId, destRoot });
+  return invoke("migrate_agent", { agentId, destRoot, withEnv });
 }
 
 export function rollback(agentId: string): Promise<string> {

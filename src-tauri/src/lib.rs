@@ -121,11 +121,15 @@ async fn plan(agent_id: String, dest_root: String) -> Result<Value, String> {
 }
 
 /// 执行迁移。进度通过 `migrate-progress` 事件推送。
+///
+/// `with_env`：迁移成功后顺带设置官方重定位环境变量（联接 + 变量双保险）；
+/// 结果作为 `set-env` 步骤附加到报告里，失败不推翻迁移本身。
 #[tauri::command]
 async fn migrate_agent(
     app: tauri::AppHandle,
     agent_id: String,
     dest_root: String,
+    with_env: Option<bool>,
 ) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let (def, src) = resolve(&agent_id)?;
@@ -138,7 +142,23 @@ async fn migrate_agent(
             // 事件发失败（窗口关了）不该中断迁移
             let _ = emit_app.emit(PROGRESS_EVENT, &pr);
         };
-        let rep = migrate::run(&p, &mut cb);
+        let mut rep = migrate::run(&p, &mut cb);
+        if with_env.unwrap_or(false) && rep.ok {
+            let detail = match migrate::env_relocate_apply(&def, Some(Path::new(&dest_root)), false)
+            {
+                Ok(msg) => migrate::StepResult {
+                    name: "set-env".into(),
+                    ok: true,
+                    detail: msg,
+                },
+                Err(e) => migrate::StepResult {
+                    name: "set-env".into(),
+                    ok: false,
+                    detail: format!("{e}（迁移本身已成功，不影响使用）"),
+                },
+            };
+            rep.steps.push(detail);
+        }
         serde_json::to_value(rep).map_err(|e| e.to_string())
     })
     .await

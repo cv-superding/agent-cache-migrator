@@ -2,6 +2,15 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.9.0] - 2026-10-17
+
+### 新增
+
+- **GUI 中英双语**：零依赖轻量 i18n（`src/i18n.tsx`）—— 界面操作层（侧栏 / 卡片标题 / 主按钮 / 确认框 / 徽章 / 空态 / toast）全部接入；默认跟随系统语言，侧栏底部一键切换并持久化。长说明性文案暂保持中文（与 README 联动）。
+- **界面历史筛选与搜索**：历史卡片新增关键字搜索（agent / 路径 / 错误）与类型过滤（全部 / 迁移 / 环境变量 / 失败）。
+- **`--with-env` 环境变量策略进迁移主流程**：CLI `acm migrate --with-env` 与界面勾选项 —— 迁移成功后顺带设置官方重定位环境变量（联接 + 变量双保险，数据可从两条路访问，撤销变量也有联接兜底）；GUI 中结果作为 `set-env` 步骤附加到报告。
+- **内置注册表新增 4 个**：LM Studio（`~/.lmstudio`）、Ollama（`~/.ollama`，class=safe）、Chatbox（`%APPDATA%\Chatbox`）、Jan（`%APPDATA%\Jan`）—— 共 **22 个**。
+
 ## [0.8.0] - 2026-10-17
 
 ### 新增

@@ -10,8 +10,9 @@ import type {
   Progress,
   Snapshot,
 } from "./types";
-import { agentState, human, stateLabel } from "./types";
+import { agentState, human } from "./types";
 import { Card, Confirm, Sidebar, Toast, type ToastItem } from "./components";
+import { classHintL, stateLabelL, t, useLang } from "./i18n";
 
 /** 各 Agent 的图标色 —— 纯展示，取不到的走默认灰。 */
 const COLORS: Record<string, string> = {
@@ -42,6 +43,7 @@ const STEP_LABEL: Record<string, string> = {
 };
 
 export default function App() {
+  useLang(); // 语言切换时整个界面重渲染
   // ---- 数据
   const [agents, setAgents] = useState<DetectedAgent[]>([]);
   const [drives, setDrives] = useState<DrivesPayload | null>(null);
@@ -62,6 +64,8 @@ export default function App() {
   const [rolling, setRolling] = useState(false);
   const [repairing, setRepairing] = useState(false);
   const [settingEnv, setSettingEnv] = useState(false);
+  /** 迁移成功后顺带设置官方重定位环境变量（联接 + 变量双保险）。 */
+  const [withEnv, setWithEnv] = useState(false);
   const [history, setHistory] = useState<{
     items: {
       type?: string;
@@ -201,17 +205,17 @@ export default function App() {
     });
 
     try {
-      const r = await api.migrateAgent(sel, destRoot);
+      const r = await api.migrateAgent(sel, destRoot, withEnv);
       setReport(r);
       if (r.ok) {
-        toast("迁移完成", `${r.src} → ${r.dest}`);
+        toast(t("toastMigrated"), `${r.src} → ${r.dest}`);
       } else if (r.rolledBack) {
-        toast("迁移失败（已自动回滚）", r.error ?? "", true);
+        toast(t("toastMigrateFailed"), r.error ?? "", true);
       } else {
-        toast("迁移失败", r.error ?? "", true);
+        toast(t("toastMigrateErr"), r.error ?? "", true);
       }
     } catch (e) {
-      toast("迁移异常", String(e), true);
+      toast(t("toastMigrateAbnormal"), String(e), true);
     } finally {
       un();
       setRunning(false);
@@ -227,11 +231,11 @@ export default function App() {
     setRolling(true);
     try {
       const msg = await api.rollback(id);
-      toast("已回滚", msg);
+      toast(t("toastRolledBack"), msg);
       await refreshAgents(false);
       await refreshSnapshots();
     } catch (e) {
-      toast("回滚失败", String(e), true);
+      toast(t("toastRollbackFailed"), String(e), true);
     } finally {
       setRolling(false);
     }
@@ -241,13 +245,13 @@ export default function App() {
     try {
       const r = await api.deleteSnapshot(path, permanent);
       toast(
-        permanent ? "已永久删除快照" : "已移入回收站",
+        permanent ? t("toastDeleted") : t("toastTrashed"),
         `回收 ${r.freedText}${permanent ? "" : "（可在系统回收站还原）"}`,
       );
       await refreshSnapshots();
       await refreshDrives();
     } catch (e) {
-      toast("删除失败", String(e), true);
+      toast(t("toastDeleteFailed"), String(e), true);
     }
   }
 
@@ -257,10 +261,10 @@ export default function App() {
     try {
       const root = destRoot || drives?.defaultDestRoot || "";
       const r = await api.repair(id, root);
-      toast("修复完成", `[${r.action}] ${r.detail}`);
+      toast(t("toastRepairDone"), `[${r.action}] ${r.detail}`);
       await refreshAgents(false);
     } catch (e) {
-      toast("修复失败", String(e), true);
+      toast(t("toastRepairFailed"), String(e), true);
     } finally {
       setRepairing(false);
     }
@@ -272,10 +276,10 @@ export default function App() {
     try {
       const root = destRoot || drives?.defaultDestRoot || null;
       const msg = await api.setEnv(id, root || null, false);
-      toast("已设置环境变量", msg);
+      toast(t("toastEnvSet"), msg);
       await refreshHistory(allHistory);
     } catch (e) {
-      toast("设置失败", String(e), true);
+      toast(t("toastEnvFailed"), String(e), true);
     } finally {
       setSettingEnv(false);
     }
@@ -308,25 +312,25 @@ export default function App() {
       <div className="main">
         <header className="head">
           <h1>
-            {cur ? cur.name : "选择一个 Agent"}
+            {cur ? cur.name : t("pickAgent")}
             {cur && (
               <>
-                <span className={`badge ${badgeOf(agentState(cur))}`}>{stateLabel(agentState(cur))}</span>
+                <span className={`badge ${badgeOf(agentState(cur))}`}>{stateLabelL(agentState(cur))}</span>
                 {cur.running.length > 0 && (
-                  <span className="badge b-warn">运行中：{cur.running.join(", ")}</span>
+                  <span className="badge b-warn">{t("runningBadge", { list: cur.running.join(", ") })}</span>
                 )}
               </>
             )}
           </h1>
           <p>
             {cur
-              ? `${classHint(cur.class)} · ${cur.kind} · 检测到 ${cur.paths.filter((p) => p.kind !== "missing").length} 个数据目录`
-              : "左边选要迁移的 Agent，右边选目标盘"}
+              ? `${classHintL(cur.class)} · ${cur.kind} · ${t("dirsDetected", { n: cur.paths.filter((p) => p.kind !== "missing").length })}`
+              : t("pickHint")}
           </p>
         </header>
 
         <div className="body">
-          {!cur && <div className="empty">没有检测到任何 Agent。</div>}
+          {!cur && <div className="empty">{t("empty")}</div>}
 
           {cur && (
             <>
@@ -337,8 +341,8 @@ export default function App() {
                 onRepair={(id) => {
                   const a = agents.find((x) => x.id === id);
                   setConfirm({
-                    title: "修复链接？",
-                    okText: "修复",
+                    title: t("repairTitle"),
+                    okText: t("repairOk"),
                     body: (
                       <>
                         会把 <span className="mono">{a?.name ?? id}</span> 的坏链接删掉，
@@ -378,7 +382,7 @@ export default function App() {
                 plan={plan}
                 planErr={planErr}
                 planning={planning}
-                onOpen={(p) => void api.openPath(p).catch((e) => toast("打不开", String(e), true))}
+                onOpen={(p) => void api.openPath(p).catch((e) => toast(t("toastCantOpen"), String(e), true))}
               />
               <RunCard
                 plan={plan}
@@ -389,9 +393,9 @@ export default function App() {
                 onRun={() => {
                   if (!plan || plan.blockers.length) return;
                   setConfirm({
-                    title: "开始迁移？",
+                    title: t("migrateTitle"),
                     danger: false,
-                    okText: "开始迁移",
+                    okText: t("startMigrate"),
                     body: (
                       <>
                         <div className="rows">
@@ -401,8 +405,7 @@ export default function App() {
                           <Row k="快照" v={<span className="mono">{plan.snapshotPrefix}&lt;时间戳&gt;</span>} />
                         </div>
                         <div className="note info" style={{ marginTop: 10 }}>
-                          执行顺序：复制 → <b>校验 0 差异</b> → 原目录改名保留 → 建目录联接 → 穿过联接验证。
-                          任何一步失败会自动回滚。<b>原目录不会删除</b>，只是改名成快照。
+                          {t("confirmOrder")}
                         </div>
                       </>
                     ),
@@ -416,6 +419,17 @@ export default function App() {
                   这个 Agent 官方支持用环境变量重定位：<code>{cur.envRelocate.env}</code>
                   {cur.envRelocate.note ? ` —— ${cur.envRelocate.note}` : ""}。
                   本工具默认走「搬目录 + 建联接」（对应用透明、更通用）。
+                  <label
+                    style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6, cursor: "pointer" }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={withEnv}
+                      disabled={running}
+                      onChange={(e) => setWithEnv(e.target.checked)}
+                    />
+                    迁移成功后同时设置该环境变量（联接 + 变量双保险，重启应用生效）
+                  </label>
                 </div>
               )}
 
@@ -441,8 +455,8 @@ export default function App() {
             onRollback={(id) => {
               const a = agents.find((x) => x.id === id);
               setConfirm({
-                title: "回滚这次迁移？",
-                okText: "回滚",
+                title: t("rollbackTitle"),
+                okText: t("rollbackOk"),
                 body: (
                   <>
                     会把 <span className="mono">{a?.name ?? id}</span> 的联接摘掉、快照改回原名。
@@ -454,10 +468,10 @@ export default function App() {
             }}
             onDelete={(s) =>
               setConfirm({
-                title: "删除这个快照？",
-                okText: "永久删除",
+                title: t("deleteTitle"),
+                okText: t("deleteOk"),
                 danger: true,
-                extra: { text: "移入回收站", onOk: () => void doDeleteSnapshot(s.path, false) },
+                extra: { text: t("trashExtra"), onOk: () => void doDeleteSnapshot(s.path, false) },
                 body: (
                   <>
                     <div className="rows">
@@ -465,9 +479,7 @@ export default function App() {
                       <Row k="占用" v={`${human(s.measure.bytes)} · ${s.measure.files} 文件`} />
                     </div>
                     <div className="note danger" style={{ marginTop: 10 }}>
-                      <b>永久删除</b>后这次迁移就<b>不能回滚</b>了，且不可恢复；
-                      「移入回收站」可从系统回收站还原（仅 Windows）。
-                      确认迁移后一切都正常再删。
+                      {t("deleteWarn")}
                     </div>
                   </>
                 ),
@@ -541,19 +553,6 @@ function badgeOf(s: ReturnType<typeof agentState>): string {
   return s === "moved" ? "b-ok" : s === "free" ? "b-gray" : "b-gray";
 }
 
-function classHint(c: string): string {
-  switch (c) {
-    case "safe":
-      return "纯缓存，可放心迁移";
-    case "special":
-      return "特殊：建议走官方流程";
-    case "system":
-      return "系统目录：不建议迁移";
-    default:
-      return "应用数据：迁移前需完全退出";
-  }
-}
-
 /** 当前状态卡片。 */
 function StatusCard({
   a,
@@ -572,25 +571,25 @@ function StatusCard({
   const shown = a.paths.filter((p) => p.kind !== "missing");
 
   return (
-    <Card title="当前状态" sub="只读检测，不改任何东西">
+    <Card title={t("statusTitle")} sub={t("statusSub")}>
       <div className="rows">
         <Row
-          k="数据目录"
+          k={t("rowPaths")}
           v={
             shown.length === 0 ? (
-              <span style={{ color: "var(--muted)" }}>未检测到（应用可能没装）</span>
+              <span style={{ color: "var(--muted)" }}>{t("noPaths")}</span>
             ) : (
               shown.map((p) => (
                 <div key={p.resolved} style={{ marginBottom: 3 }}>
                   <span className="mono">{p.resolved}</span>{" "}
                   {p.isLink ? (
                     p.linkBroken ? (
-                      <span className="badge b-danger">联接已断</span>
+                      <span className="badge b-danger">{t("linkBroken")}</span>
                     ) : (
-                      <span className="badge b-ok">联接</span>
+                      <span className="badge b-ok">{t("linkOk")}</span>
                     )
                   ) : (
-                    <span className="badge b-gray">真实目录</span>
+                    <span className="badge b-gray">{t("realDir")}</span>
                   )}
                 </div>
               ))
@@ -599,7 +598,7 @@ function StatusCard({
         />
         {shown.some((p) => p.linkTarget) && (
           <Row
-            k="实际指向"
+            k={t("rowTarget")}
             v={
               <span className="mono">
                 {shown.map((p) => p.linkTarget).filter(Boolean).join("、")}
@@ -608,69 +607,67 @@ function StatusCard({
           />
         )}
         <Row
-          k="占用"
+          k={t("rowSize")}
           v={
             a.total.files === 0 && !a.detected ? (
               "—"
             ) : (
               <>
                 {a.total.capped ? "≥" : ""}
-                {human(a.total.bytes)} · {a.total.files.toLocaleString()} 个文件
+                {human(a.total.bytes)} · {a.total.files.toLocaleString()}
+                {t("filesUnit")}
                 {a.total.capped && (
-                  <span style={{ color: "var(--muted)" }}>（到上限就停了，是下限）</span>
+                  <span style={{ color: "var(--muted)" }}>{t("sizeCapped")}</span>
                 )}
               </>
             )
           }
         />
         {a.updaters.length > 0 && (
-          <Row k="更新器" v={<span className="mono">{a.updaters.join("、")}</span>} />
+          <Row k={t("rowUpdater")} v={<span className="mono">{a.updaters.join("、")}</span>} />
         )}
         <Row
-          k="运行状态"
+          k={t("rowRunning")}
           v={
             a.running.length > 0 ? (
-              <span className="badge b-warn">运行中：{a.running.join(", ")}</span>
+              <span className="badge b-warn">{t("runningState", { list: a.running.join(", ") })}</span>
             ) : (
-              <span className="badge b-ok">未运行</span>
+              <span className="badge b-ok">{t("notRunning")}</span>
             )
           }
         />
         {a.envRelocate && onSetEnv && st !== "absent" && (
         <div style={{ marginTop: 11 }}>
           <div className="note info" style={{ marginBottom: 8 }}>
-            该应用官方支持用环境变量 <span className="mono">{a.envRelocate.env}</span>{" "}
-            重定位数据目录 —— 比联接更干净（原路径不留任何东西）。
+            {t("envNote")}{" "}
+            <span className="mono">{a.envRelocate.env}</span>
           </div>
           <button className="btn" disabled={settingEnv} onClick={() => onSetEnv(a.id)}>
-            {settingEnv ? "设置中…" : "用环境变量重定位"}
+            {settingEnv ? t("envSetting") : t("envBtn")}
           </button>
         </div>
       )}
-      {a.note && <Row k="提示" v={a.note} />}
+      {a.note && <Row k={t("rowNote")} v={a.note} />}
       </div>
 
       {st === "moved" && (
         <div className="note ok" style={{ marginTop: 11 }}>
-          已经迁移过了 —— 数据在目标盘，应用通过联接无感读写。
-          <b>设置页里显示的仍是原路径，这是正常的</b>（联接对应用透明）。
+          {t("movedNote")}
         </div>
       )}
       {a.brokenLinks.length > 0 && onRepair && (
         <div style={{ marginTop: 11 }}>
           <div className="note danger" style={{ marginBottom: 8 }}>
-            检测到 {a.brokenLinks.length} 个断链联接 —— 应用「解压到临时名再改名」的
-            准备工作会<b>永久失败</b>，每次启动都重做一遍。如果数据还在目标位置，可以一键重建。
+            {t("brokenCount", { n: a.brokenLinks.length })}
           </div>
           <button className="btn pri" disabled={repairing} onClick={() => onRepair(a.id)}>
-            {repairing ? "修复中…" : "修复链接（不动数据）"}
+            {repairing ? t("repairing") : t("repairBtn")}
           </button>
         </div>
       )}
       {st === "absent" && (
         <div className="note info" style={{ marginTop: 11 }}>
-          没有检测到这个 Agent 的数据目录。如果确实装了，可能是装在自定义位置 ——
-          可以在 <code>%APPDATA%\AgentCache\agents.toml</code> 里补一条。
+          {t("absentNote")}
         </div>
       )}
     </Card>
@@ -703,15 +700,65 @@ function HistoryCard({
   showAll: boolean;
   onToggleAll: () => void;
 }) {
-  const items = history?.items ?? [];
+  const all = history?.items ?? [];
+  // 筛选状态放组件内部 —— 它是查账工具的本地视角，不用污染全局
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "migrate" | "env" | "failed">("all");
+  const q = query.trim().toLowerCase();
+  const items = all.filter((it) => {
+    if (filter === "migrate" && it.type === "env") return false;
+    if (filter === "env" && it.type !== "env") return false;
+    if (filter === "failed" && it.ok !== false) return false;
+    if (!q) return true;
+    return [it.agent, it.src, it.dest, it.var, it.detail, it.error, it.ts]
+      .filter(Boolean)
+      .some((s) => String(s).toLowerCase().includes(q));
+  });
+  const filterBtn = (key: typeof filter, label: string) => (
+    <button
+      key={key}
+      className={filter === key ? "btn pri" : "btn"}
+      style={{ padding: "2px 10px", fontSize: 12 }}
+      onClick={() => setFilter(key)}
+    >
+      {label}
+    </button>
+  );
   return (
     <Card
-      title="迁移历史"
-      sub="何时对哪个目录做过什么（含失败的）"
+      title={t("historyTitle")}
+      sub={t("historySub")}
     >
-      {items.length === 0 ? (
+      {all.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            flexWrap: "wrap",
+            marginBottom: 10,
+            alignItems: "center",
+          }}
+        >
+          <input
+            className="mono"
+            placeholder={t("searchPh")}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            style={{ flex: "1 1 160px", minWidth: 140, padding: "4px 8px" }}
+          />
+          {filterBtn("all", t("filterAll"))}
+          {filterBtn("migrate", t("filterMigrate"))}
+          {filterBtn("env", t("filterEnv"))}
+          {filterBtn("failed", t("filterFailed"))}
+        </div>
+      )}
+      {all.length === 0 ? (
         <div style={{ color: "var(--muted)", fontSize: 12.5 }}>
-          还没有记录 —— 每次迁移（含失败的）都会自动记到这里。
+          {t("noRecords")}
+        </div>
+      ) : items.length === 0 ? (
+        <div style={{ color: "var(--muted)", fontSize: 12.5 }}>
+          {t("noMatch", { q: query || filter })}
         </div>
       ) : (
         <>
@@ -722,7 +769,7 @@ function HistoryCard({
                 <div key={`${it.ts}-${i}`} style={{ marginBottom: 6, fontSize: 12.5 }}>
                   {isEnv ? (
                     <>
-                      <span className="badge b-gray">环境变量</span>{" "}
+                      <span className="badge b-gray">{t("badgeEnv")}</span>{" "}
                       <span style={{ color: "var(--muted)" }}>{it.ts}</span>{" "}
                       <span className="mono">{it.agent}</span>
                       <div className="mono" style={{ opacity: 0.8, marginTop: 2 }}>
@@ -733,7 +780,7 @@ function HistoryCard({
                   ) : (
                     <>
                       <span className={it.ok ? "badge b-ok" : "badge b-danger"}>
-                        {it.ok ? "成功" : "失败"}
+                        {it.ok ? t("ok") : t("fail")}
                       </span>{" "}
                       <span style={{ color: "var(--muted)" }}>{it.ts}</span>{" "}
                       <span className="mono">{it.agent}</span>
@@ -743,7 +790,7 @@ function HistoryCard({
                       {it.error && (
                         <div style={{ color: "#b91c1c", marginTop: 2 }}>
                           {it.error}
-                          {it.rolledBack && "（已自动回滚）"}
+                          {it.rolledBack && t("autoRolledBack")}
                         </div>
                       )}
                     </>
@@ -753,7 +800,7 @@ function HistoryCard({
             })}
           </div>
           <button className="btn" style={{ marginTop: 8 }} onClick={onToggleAll}>
-            {showAll ? "只看最近 15 条" : "查看全部"}
+            {showAll ? t("recent15") : t("viewAll")}
           </button>
           <div style={{ color: "var(--muted)", fontSize: 11.5, marginTop: 8 }} className="mono">
             {history?.path}
@@ -777,11 +824,11 @@ function DestCard(props: {
   const { drives, destRoot, onDestRoot, plan, planErr, planning, onOpen } = props;
 
   return (
-    <Card title="迁移到" sub="左边选盘，右边确认路径">
+    <Card title={t("destTitle")} sub={t("destSub")}>
       {!drives ? (
         <div className="empty">
           <span className="spin" />
-          正在读取磁盘…
+          {t("readingDisks")}
         </div>
       ) : (
         <>
@@ -798,7 +845,7 @@ function DestCard(props: {
 
           <div style={{ marginTop: 13 }}>
             <Row
-              k="目标路径"
+              k={t("rowDestPath")}
               v={
                 <div className="field">
                   <input
@@ -811,16 +858,16 @@ function DestCard(props: {
                     className="btn sm"
                     onClick={() => drives.defaultDestRoot && onDestRoot(drives.defaultDestRoot)}
                   >
-                    用默认
+                    {t("useDefault")}
                   </button>
                   <button className="btn sm" onClick={() => destRoot && onOpen(destRoot)}>
-                    打开
+                    {t("open")}
                   </button>
                 </div>
               }
             />
             <Row
-              k="最终落点"
+              k={t("rowFinal")}
               v={
                 <span className="mono">
                   {plan ? plan.dest : destRoot ? `${destRoot}\\<agent-id>` : "—"}
@@ -832,13 +879,14 @@ function DestCard(props: {
           {planning && (
             <div className="note info" style={{ marginTop: 11 }}>
               <span className="spin" />
-              正在生成迁移计划…
+              {t("planning")}
             </div>
           )}
 
           {planErr && (
             <div className="note warn" style={{ marginTop: 11 }}>
-              生成计划失败：{planErr}
+              {t("planFailed")}
+              {planErr}
             </div>
           )}
 
@@ -951,16 +999,16 @@ function RunCard(props: {
   const nowStep = progress?.step ?? "";
 
   return (
-    <Card title="执行" sub="原目录只改名不删除，随时可回滚">
+    <Card title={t("runTitle")} sub={t("runSub")}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <button className="btn pri" disabled={!can} onClick={onRun}>
           {running ? (
             <>
               <span className="spin" style={{ borderTopColor: "#fff", borderColor: "#4b5563" }} />
-              正在迁移…
+              {t("runningStateBadge")}
             </>
           ) : (
-            "开始迁移"
+            t("startMigrate")
           )}
         </button>
         <span style={{ color: "var(--muted)", fontSize: 12 }}>
@@ -1065,7 +1113,7 @@ function SnapshotCard(props: {
   const total = snaps.reduce((n, s) => n + s.measure.bytes, 0);
 
   return (
-    <Card title="快照" sub="迁移时原目录改名保留的那份，确认没问题再清">
+    <Card title={t("snapshotsTitle")} sub={t("snapshotsSub")}>
       {snaps.length === 0 ? (
         <div className="note info">
           没有快照。迁移成功后这里会出现原目录的备份（<code>&lt;名字&gt;.moved-&lt;时间戳&gt;</code>）。
