@@ -217,11 +217,13 @@ agent-cache-migrator/
 **为什么先做 CLI**：界面上看到的数据，命令行能原样打出来。出问题时不用猜是内核错了还是界面错了。
 
 ```bash
+acm                        # 交互式向导（不用读文档：编号迁移 / r 回滚 / f 修复 / d 体检）
 acm detect                 # 检测本机 Agent（--json 给脚本用）
 acm plan codex             # 生成迁移计划 —— **不动任何文件**
 acm migrate codex --dest D:\AgentCache --yes   # 执行迁移（多目录 Agent 逐个迁，失败即停）
 acm rollback codex         # 回滚：快照改回原位（迁移后新数据先备份到恢复目录）
 acm repair codex           # 修复：目标数据还在但链接坏了，只重建链接
+acm doctor                 # 体检：断链 / 运行中 / 快照脏状态 / 孤儿快照 + 修复命令
 acm snapshots              # 列出迁移快照（可回滚的那份）
 acm history                # 迁移历史（何时对哪个目录做过什么）
 acm drives                 # 盘符 + 剩余空间 + 自动挑的目标根

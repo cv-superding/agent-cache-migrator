@@ -11,8 +11,7 @@ const USAGE: &str = "\
 acm —— AgentCache 命令行
 
 用法:
-  acm detect [选项]          检测本机装了哪些 Agent
-  acm list                   列出注册表里的 Agent（不检测）
+  acm detect [选项]          检测本机装了哪些 Agent  acm list                   列出注册表里的 Agent（不检测）
   acm plan <id> [--dest <根>]  为某个 Agent 生成迁移计划（**不动任何文件**）
   acm migrate <id> [选项]    执行迁移（复制 → 校验 → 快照 → 联接，失败自动回滚）
   acm rollback <id> [--yes]  回滚：把快照改回原位（迁移后新数据会先备份到恢复目录）
@@ -20,6 +19,7 @@ acm —— AgentCache 命令行
   acm env <id> [选项]        设置/删除 Agent 官方支持的重定位环境变量（仅限配了 env_relocate 的）
   acm snapshots              列出所有迁移快照（原目录改名保留的那份）
   acm history [--all]        查看迁移历史（最近 20 条，--all 全部）
+  acm doctor [--json]        体检：断链 / 运行中 / 快照脏状态 / 孤儿快照，附修复命令
   acm drives                 列出盘符与剩余空间
   acm help                   显示这段帮助
 
@@ -57,7 +57,7 @@ env 选项:
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let cmd = args.first().map(String::as_str).unwrap_or("help");
+    let cmd = args.first().map(String::as_str).unwrap_or("wizard");
 
     let r = match cmd {
         "detect" => cmd_detect(&args[1..]),
@@ -69,6 +69,8 @@ fn main() -> ExitCode {
         "env" => cmd_env(&args[1..]),
         "snapshots" => cmd_snapshots(&args[1..]),
         "history" => cmd_history(&args[1..]),
+        "doctor" => cmd_doctor(&args[1..]),
+        "wizard" => cmd_wizard(args.get(1..).unwrap_or(&[])),
         "drives" => cmd_drives(),
         "help" | "-h" | "--help" => {
             print!("{USAGE}");
@@ -722,6 +724,145 @@ fn cmd_history(args: &[String]) -> Result<(), String> {
         if let Some(e) = it["error"].as_str() {
             println!("      └ {e}");
         }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------- wizard
+
+/// 交互式向导：`acm` 不带参数时进入 —— 不用读文档就能完成迁移/回滚/修复。
+///
+/// 菜单每轮重新检测（执行完动作状态会变）；所有危险动作走子命令的
+/// 确认流程，这里只做「选目标」。
+fn cmd_wizard(_args: &[String]) -> Result<(), String> {
+    println!("AgentCache 交互模式（输入 q 随时退出）");
+    loop {
+        println!("\n─────────────────────────────");
+        let defs = agents::load(None)?;
+        let detected = agents::detect_all(&defs, &agents::DetectOpts::default());
+
+        // 只列「有得操作」的：有真实目录（可迁移）或有联接（可回滚/修复）
+        let actionable: Vec<&acm_core::DetectedAgent> = detected
+            .iter()
+            .filter(|a| a.paths.iter().any(|p| p.kind == "dir" || p.is_link))
+            .collect();
+
+        if actionable.is_empty() {
+            println!("没有检测到可操作的 Agent（应用可能都没装）。");
+            println!("装好应用后再运行 `acm` 即可。");
+            return Ok(());
+        }
+
+        for (i, a) in actionable.iter().enumerate() {
+            let link = a.paths.iter().any(|p| p.is_link);
+            let broken = !a.broken_links.is_empty();
+            let size = if a.total.files > 0 {
+                format!("，{}", fsutil::human(a.total.bytes))
+            } else {
+                String::new()
+            };
+            let status = if broken {
+                "⚠ 有断链"
+            } else if link {
+                "已迁移"
+            } else {
+                "可迁移"
+            };
+            println!(
+                "  {:>2}) {:<16} {:<18} {}{}",
+                i + 1,
+                a.id,
+                a.name,
+                status,
+                size
+            );
+        }
+
+        println!("\n命令：编号 = 迁移｜r 编号 = 回滚｜f 编号 = 修复｜d = 体检｜q = 退出");
+        print!("> ");
+        use std::io::Write as _;
+        std::io::stdout()
+            .flush()
+            .map_err(|e| format!("写不进控制台：{e}"))?;
+
+        let mut line = String::new();
+        std::io::stdin()
+            .read_line(&mut line)
+            .map_err(|e| format!("读不到输入：{e}"))?;
+        let t = line.trim().to_string();
+
+        match t.as_str() {
+            "q" | "quit" | "exit" | "" => return Ok(()),
+            "d" | "doctor" => {
+                let _ = cmd_doctor(&[]);
+                continue;
+            }
+            _ => {}
+        }
+
+        let (verb, idx_str) = if let Some(rest) = t.strip_prefix('r') {
+            ("r", rest.trim())
+        } else if let Some(rest) = t.strip_prefix('f') {
+            ("f", rest.trim())
+        } else {
+            ("m", t.as_str())
+        };
+
+        let Ok(n) = idx_str.parse::<usize>() else {
+            println!("看不懂输入：{t:?}（编号、r 编号、f 编号、d 或 q）");
+            continue;
+        };
+        if n == 0 || n > actionable.len() {
+            println!("编号超出范围（1-{}）", actionable.len());
+            continue;
+        }
+        let id = actionable[n - 1].id.clone();
+
+        let r = match verb {
+            "r" => cmd_rollback(std::slice::from_ref(&id)),
+            "f" => cmd_repair(std::slice::from_ref(&id)),
+            _ => cmd_migrate(std::slice::from_ref(&id)),
+        };
+        if let Err(e) = r {
+            eprintln!("✗ {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------- doctor
+
+/// 体检：只读检查，把状态里的毛病一次报出来，每条都带可复制的修复命令。
+fn cmd_doctor(args: &[String]) -> Result<(), String> {
+    let json = args.iter().any(|a| a == "--json");
+    let cfg = flag_path(args, "--config");
+    let defs = agents::load(cfg.as_deref())?;
+    let findings = acm_core::doctor::run_checks(&defs);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&findings).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+
+    println!("🔍 健康检查\n");
+    for f in &findings {
+        let mark = match f.level.as_str() {
+            "ok" => "✓",
+            "info" => "ℹ",
+            "warn" => "⚠",
+            _ => "✗",
+        };
+        println!("[{}] {} {}", f.area, mark, f.message);
+        if let Some(h) = &f.hint {
+            println!("        ↳ 建议：{h}");
+        }
+    }
+    let (errors, warnings) = acm_core::doctor::summarize(&findings);
+    println!("\n结论：{} 个错误，{} 个警告", errors, warnings);
+    if errors > 0 {
+        return Err(format!("{errors} 个需要处理的错误"));
     }
     Ok(())
 }
