@@ -6,6 +6,28 @@
 #  这份是「内置表」；用户目录下的同名文件（Windows: %APPDATA%\AgentCache\agents.toml）
 #  可以覆盖同 id 的条目、或追加新的 id。
 #
+#  条目来源与验证状态
+#  ─────────────────────────────────────────────────────────────────────────
+#  ✅ 本机实测：workbuddy-cn / workbuddy-intl / codex / claude / deepseek /
+#              cherry / npm-cache（真机 detect 命中 + 迁移验证）
+#  📄 官方文档：gemini-cli、lingma（~/.lingma）、codex/claude 的 env_relocate
+#  📚 开源参考：cursor 双路径（taod518/cursor-appdata-mover 实证）
+#              飞书 %APPDATA%\LarkShell（linad3d/drivekeeper 的 app-cache-atlas
+#              实证「联接后登录保留」）
+#  ⚠️ Electron 约定推断（未实测，路径模式可靠但请报 issue 反馈）：
+#              codebuddy-cn / trae / zcode / doubao / windsurf / chatbox / jan 等
+#
+#  机制优先级（参考 linad3d/drivekeeper 的 relocation-methods.md）：
+#    1. 应用内设置（如微信的「存储位置」）—— 应用自己搬数据，账目最一致
+#    2. 环境变量（env_relocate）—— 声明式，重装也在
+#    3. NTFS 联接 —— 万能兜底（本工具的默认方式）
+#
+#  ⚠️ 明确不建议迁移的（app-cache-atlas 的结论，写在这里防止误加条目）：
+#    微信 / 企业微信 / QQ —— 本地消息库与文件是「仅本机存在」的用户数据，
+#        应用内置存储位置设置比外部联接更可靠，风险/收益不成比例。
+#        请引导用户用应用内的设置，不要给它们加条目。
+#    浏览器 profile（Chrome/Edge）—— 空间收益小、历史/密码库损坏风险大。
+#
 #  字段说明
 #  ─────────────────────────────────────────────────────────────────────────
 #  id           唯一标识，同时用作默认目标子目录名。只允许 [a-z0-9-]
@@ -92,13 +114,14 @@ paths    = ["~/.claude"]
 env_relocate = { env = "CLAUDE_CONFIG_DIR", note = "Claude Code 官方支持；也支持 XDG_CONFIG_HOME" }
 processes = ["claude*"]
 
+# 出处：taod518/cursor-appdata-mover 实证 Cursor 数据在 Roaming 与 Local 两侧
 [[agent]]
 id       = "cursor"
 name     = "Cursor"
 vendor   = "Anysphere"
 kind     = "electron"
 class    = "normal"
-paths    = ["%APPDATA%/Cursor"]
+paths    = ["%APPDATA%/Cursor", "%LOCALAPPDATA%/Cursor"]
 processes = ["Cursor.exe"]
 skip     = ["logs/**", "CachedData/**", "Code Cache/**", "GPUCache/**", "Crashpad/**"]
 
@@ -201,6 +224,19 @@ processes = ["Jan.exe"]
 
 
 # ───────────────────────────── 通用工具 ─────────────────────────────
+
+# 出处：linad3d/drivekeeper 的 app-cache-atlas.md —— 明确实证
+# 「%APPDATA%\LarkShell 打联接后登录保留、新数据写到目标盘」；
+# 应用内只有「下载位置」设置，管不到这个目录，联接是正解。
+[[agent]]
+id       = "feishu"
+name     = "飞书"
+vendor   = "字节跳动"
+kind     = "electron"
+class    = "normal"
+paths    = ["%APPDATA%/LarkShell"]
+processes = ["Feishu.exe", "LarkShell.exe"]
+skip     = ["**/Cache/**", "**/Code Cache/**", "**/GPUCache/**", "sdk_storage/log/**", "**/logs/**"]
 
 [[agent]]
 id       = "cherry"

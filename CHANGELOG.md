@@ -2,6 +2,17 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.9.1] - 2026-10-17
+
+### 修正与充实（针对「Agent 条目没有出处」的审查意见：真去读了参考项目的源码）
+
+- **Cursor 条目补全双路径**：`%APPDATA%\Cursor` + `%LOCALAPPDATA%\Cursor` —— 出处 [`taod518/cursor-appdata-mover`](https://github.com/taod518/cursor-appdata-mover) 实证（此前只配了 Roaming 一侧，会漏迁一半数据）。
+- **新增飞书条目**：`%APPDATA%\LarkShell` —— 出处 [`linad3d/drivekeeper`](https://github.com/linad3d/drivekeeper) 的 `app-cache-atlas.md` 明确实证「联接后登录保留、新数据写到目标盘」；应用内「下载位置」设置管不到该目录，联接是正解。skip 按 atlas 的子目录判决表配置。
+- **`agents.toml` 头部新增「条目来源与验证状态」**：每个条目标注 ✅ 本机实测 / 📄 官方文档 / 📚 开源实证 / ⚠️ Electron 约定推断 —— 把「哪些没验证」诚实摆出来，社区可按条目报 issue。
+- **写入机制优先级**（drivekeeper `relocation-methods.md` 的方法论）：应用内设置 > 环境变量 > NTFS 联接（联接是万能兜底而非首选）。
+- **写入「明确不建议迁移」清单**：微信 / 企业微信 / QQ（本地消息库是仅本机存在的用户数据，应用内置设置更可靠）、浏览器 profile —— 防止未来误加条目。
+- README 调研章节补全：本次实际通读了 5 个参考项目的源码/文档（OPTOPIA、zhao-wuyan、drivekeeper、cursor-appdata-mover、ccmv），标注各自借鉴点。
+
 ## [0.9.0] - 2026-10-17
 
 ### 新增

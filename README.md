@@ -144,7 +144,15 @@ skip      = ["**/node_modules"]       # 可选：这些不进校验
 | [`hwl513782273/WorkBuddyUpdateBlocker`](https://github.com/hwl513782273/WorkBuddyUpdateBlocker)（Swift, macOS） | 同类项目的**免责与边界写法**：写清「依赖内部机制，厂商改版就可能失效」，并在应用升级后提示重新检查 |
 | [`OPTOPIA/appdata-migrate-tool`](https://github.com/OPTOPIA/appdata-migrate-tool)（PowerShell） | **回滚前先把目标数据备份到恢复目录**（迁移后新增的数据不因回滚丢失）；迁移状态清单落盘（`.AppDataMigrateState`）—— 值得列入后续方向 |
 | [`zhao-wuyan/directory-migration-tool`](https://github.com/zhao-wuyan/directory-migration-tool)（C#/PowerShell） | **实时进度**（本项目的复制阶段真实进度即同类做法）；`-Repair` 修复模式（目标数据还在、只是链接丢了时只重建链接不复制）—— 值得列入后续方向 |
-| [`linad3d/drivekeeper`](https://github.com/linad3d/drivekeeper)（PowerShell, MIT） | 「独立重数校验，不信复制工具自己的汇总」「确认活写入」的验证哲学 —— 与本项目一致，作为交叉印证 |
+| [`linad3d/drivekeeper`](https://github.com/linad3d/drivekeeper)（PowerShell, MIT） | 「独立重数校验，不信复制工具自己的汇总」「确认活写入」的验证哲学 —— 与本项目一致，作为交叉印证；**`app-cache-atlas.md` 应用缓存地图**：Chromium profile 子目录级「可删/必留」判决表、微信/企业微信/QQ「仅本机存在的用户数据，勿动、用应用内设置」、飞书 `%APPDATA%\LarkShell` 联接实证（登录保留）；**`relocation-methods.md` 机制优先级**：应用内设置 > 环境变量 > NTFS 联接（联接是万能兜底而非首选）—— 已写入 `agents.toml` 头部注释 |
+| [`taod518/cursor-appdata-mover`](https://github.com/taod518/cursor-appdata-mover)（Python） | Cursor 数据在 **Roaming 与 Local 两侧**（`%APPDATA%\Cursor` + `%LOCALAPPDATA%\Cursor`）—— 已据此补全 cursor 条目的第二个路径 |
+| [`Saqoosha/ccmv`](https://github.com/Saqoosha/ccmv)（JS） | Claude Code `~/.claude`、Cursor 三平台路径（macOS `~/Library/Application Support/Cursor`、Linux `~/.config/Cursor`）交叉印证 |
+
+**条目来源与验证状态**（也写在 `agents.toml` 头部）：
+✅ 本机实测（workbuddy 双版本、codex、claude、deepseek、cherry、npm-cache）；
+📄 官方文档（gemini-cli、lingma、env_relocate 变量）；
+📚 开源实证（cursor 双路径、飞书 LarkShell）；
+⚠️ Electron 约定推断、未实测（codebuddy-cn、trae、zcode、doubao、windsurf、chatbox、jan 等）——路径模式可靠，但欢迎报 issue 反馈修正。
 
 **默认目标目录**（三选一，界面上可改）：
 
@@ -154,26 +162,33 @@ skip      = ["**/node_modules"]       # 可选：这些不进校验
 
 ---
 
-## 已内置（实测于 Windows 11）
+## 已内置（22 个；标 ✅ 的在本机实测过，其余为官方文档/开源实证/Electron 约定，详见 `agents.toml` 头部）
 
-| Agent | 数据目录 |
-|---|---|
-| WorkBuddy 国内版 | `~/.workbuddy` |
-| WorkBuddy 国际版 | `~/.workbuddy-ai` |
-| Codex CLI | `~/.codex` |
-| Claude Code | `~/.claude` |
-| Cursor | `%APPDATA%\Cursor` |
-| CodeBuddy 国内版 | `%APPDATA%\CodeBuddy CN` |
-| Trae CN | `%APPDATA%\Trae CN` |
-| ZCode | `%APPDATA%\ZCode` |
-| DeepSeek | `%APPDATA%\@deepseek-ai` |
-| Cherry Studio | `%APPDATA%\CherryStudio` |
-| 豆包 | `%APPDATA%\Doubao` |
-| Windsurf | `%APPDATA%\Windsurf` |
-| 通义灵码 | `~/.lingma` |
-| Gemini CLI | `~/.gemini` |
-| uTools | `%APPDATA%\uTools` |
-| npm 缓存（`class=safe`） | `%LOCALAPPDATA%\npm-cache` · `~/.npm/_cacache` |
+| Agent | 数据目录 | 验证 |
+|---|---|---|
+| WorkBuddy 国内版 | `~/.workbuddy` | ✅ |
+| WorkBuddy 国际版 | `~/.workbuddy-ai` | ✅ |
+| Codex CLI | `~/.codex` | ✅ |
+| Claude Code | `~/.claude` | ✅ |
+| Cursor | `%APPDATA%\Cursor` · `%LOCALAPPDATA%\Cursor` | 📚 |
+| CodeBuddy 国内版 | `%APPDATA%\CodeBuddy CN` | ⚠️ |
+| Trae CN | `%APPDATA%\Trae CN` | ⚠️ |
+| ZCode | `%APPDATA%\ZCode` | ⚠️ |
+| DeepSeek | `%APPDATA%\@deepseek-ai` | ✅ |
+| Cherry Studio | `%APPDATA%\CherryStudio` | ✅ |
+| 豆包 | `%APPDATA%\Doubao` | ⚠️ |
+| Windsurf | `%APPDATA%\Windsurf` | ⚠️ |
+| CodeBuddy 国际版 | `%APPDATA%\CodeBuddy` | ⚠️ |
+| Trae 国际版 | `%APPDATA%\Trae` | ⚠️ |
+| 通义灵码 | `~/.lingma` | 📄 |
+| Gemini CLI | `~/.gemini` | 📄 |
+| LM Studio | `~/.lmstudio` | 📄 |
+| Ollama（`class=safe`） | `~/.ollama` | 📄 |
+| Chatbox | `%APPDATA%\Chatbox` | ⚠️ |
+| Jan | `%APPDATA%\Jan` | ⚠️ |
+| uTools | `%APPDATA%\uTools` | ⚠️ |
+| npm 缓存（`class=safe`） | `%LOCALAPPDATA%\npm-cache` · `~/.npm/_cacache` | ✅ |
+| 飞书 | `%APPDATA%\LarkShell` | 📚 |
 
 ---
 
