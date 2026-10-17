@@ -1167,19 +1167,51 @@ mod imp {
     /// 把运行时联接指向的整棵树也复制一遍（可能几十 GB 且在别的盘上）。
     const ROBO_EXTRA: [&str; 1] = ["/XJ"];
 
+    /// 🔴 `/MT:16` 多线程复制（对齐 zennos0609-dotcom/AppDataMover）——
+    /// 大目录复制显著加速；每文件仍输出一行，行计数进度的口径不变。
+    const ROBO_MT: [&str; 1] = ["/MT:16"];
+
     /// 递归复制（Windows：robocopy），**每复制一个文件回调一次**已复制计数。
     ///
     /// 🔴 复制阶段**不**加 `/NFL` —— 要靠「每复制一个文件输出一行」驱动真实进度。
     /// `/NDL`（不列目录）、`/NJH /NJS`（无头尾）、`/NP`（无百分比行）都保留，
     /// 于是**剩下的非空行 ≈ 已复制文件数**。行内容是 OEM 编码无所谓 —— 只数行，
     /// 不做解码（解码才需要关心代码页）。
+    ///
+    /// 另外参考 OPTOPIA 的做法把 robocopy 完整日志落盘到
+    /// `%APPDATA%\AgentCache\logs\<名>-<时间戳>.robocopy.log`（`/TEE /LOG`）——
+    /// stdout 照常驱动进度，日志留档供事后审计「当时到底复制了什么」。
     pub fn copy_tree(src: &Path, dst: &Path, on_file: &mut dyn FnMut(u64)) -> Result<(), String> {
         let s = src.to_string_lossy().to_string();
         let d = dst.to_string_lossy().to_string();
-        let mut args: Vec<&str> = vec![s.as_str(), d.as_str()];
-        args.extend_from_slice(&ROBO_SAFE);
-        args.extend_from_slice(&ROBO_EXTRA);
-        args.extend_from_slice(&["/NDL", "/NJH", "/NJS", "/NP"]);
+        let mut args: Vec<String> = vec![s.clone(), d.clone()];
+        args.extend(ROBO_SAFE.iter().map(|s| s.to_string()));
+        args.extend(ROBO_EXTRA.iter().map(|s| s.to_string()));
+        args.extend(ROBO_MT.iter().map(|s| s.to_string()));
+        args.extend([
+            "/NDL".to_string(),
+            "/NJH".to_string(),
+            "/NJS".to_string(),
+            "/NP".to_string(),
+        ]);
+
+        // 日志落盘（best-effort：建不了目录就不留档，不影响复制本身）
+        if let Some(log_dir) =
+            crate::paths::roaming_dir().map(|d| d.join("AgentCache").join("logs"))
+        {
+            if std::fs::create_dir_all(&log_dir).is_ok() {
+                let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+                let name = src
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "copy".to_string());
+                args.push("/TEE".to_string());
+                args.push(format!(
+                    "/LOG:{}",
+                    log_dir.join(format!("{name}-{ts}.robocopy.log")).display()
+                ));
+            }
+        }
 
         let mut child = syscmd::command("robocopy")
             .args(&args)

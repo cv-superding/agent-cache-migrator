@@ -2,6 +2,15 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.9.4] - 2026-10-18
+
+### 新增（第四轮源码对照：AppDataMover `Mover.cs` 全文 + OPTOPIA `AppDataMigrate.ps1` 流水线）
+
+- **`/MT:16` 多线程复制**（对齐 zennos0609-dotcom/AppDataMover 的 `RunRobocopy`）—— 大目录复制显著加速；每文件仍输出一行，行计数进度的口径不变。
+- **robocopy 日志落盘**（对齐 OPTOPIA 的 `/LOG` + manifest.LogPath）：完整日志写到 `%APPDATA%\AgentCache\logs\<名>-<时间戳>.robocopy.log`（`/TEE` 保证 stdout 进度不受影响）—— 事后可审计「当时到底复制了什么」；已由迁移回环测试实测落盘。
+- **对照确认我们更强的地方**（不改）：`/DCOPY:DAT`（目录属性完整保留，OPTOPIA 只保时间戳）、`/XJ`（AppDataMover 复制时没加，源里有联接会被跟进去）；校验用 robocopy `/L` 独立重数 0 差异（比双侧 CountTree 对比更严）。
+- **评估不采纳**：OPTOPIA 的 `-VerifyHash`（SHA-256 全量校验）—— 大目录太慢，列为 backlog；复制失败的半成品清理（AppDataMover 会删）—— 我们的半成品是「增量续传」的基础，删除反而违背设计。
+
 ## [0.9.3] - 2026-10-17
 
 ### 新增（继续深读 zhao-wuyan ★81 的核心服务源码）
