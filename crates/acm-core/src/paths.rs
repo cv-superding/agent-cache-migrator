@@ -91,6 +91,23 @@ pub fn expand(template: &str) -> Option<PathBuf> {
         return None;
     }
 
+    // 绝对路径直接归一化返回。
+    // 🔴 绝对路径不能走下面的「逐段 push 到空 base」：
+    //    Windows 上 push("C:") 再 push("Users") 会得到盘符相对路径
+    //    `C:Users\...`（分隔符丢失，实测踩过）；unix 上 `/Users/x` 也会被拼成相对路径。
+    //    UNC（\\server\share）同理。
+    #[cfg(windows)]
+    {
+        let b = t.as_bytes();
+        if (b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic()) || t.starts_with("\\\\") {
+            return Some(PathBuf::from(t.replace('/', "\\")));
+        }
+    }
+    #[cfg(not(windows))]
+    if t.starts_with('/') {
+        return Some(PathBuf::from(t));
+    }
+
     let (base, rest) = if let Some(r) = t.strip_prefix('~') {
         (home_dir()?, r)
     } else if let Some(r) = strip_var(t, "APPDATA") {
@@ -133,6 +150,41 @@ fn strip_var<'a>(s: &'a str, name: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 绝对路径不被逐段 push 拼坏 —— 曾把 `C:\Users\x` 拼成盘符相对路径
+    /// `C:Users\x`（分隔符丢失）。
+    #[cfg(windows)]
+    #[test]
+    fn expand_keeps_absolute_windows_paths() {
+        assert_eq!(
+            expand("C:\\Users\\someone\\.codex").map(|p| p.to_string_lossy().to_string()),
+            Some("C:\\Users\\someone\\.codex".to_string())
+        );
+        // 正斜杠写法归一成反斜杠
+        assert_eq!(
+            expand("C:/Users/someone/.codex").map(|p| p.to_string_lossy().to_string()),
+            Some("C:\\Users\\someone\\.codex".to_string())
+        );
+        // 盘符根 + UNC
+        assert_eq!(
+            expand("D:\\AgentCache").map(|p| p.to_string_lossy().to_string()),
+            Some("D:\\AgentCache".to_string())
+        );
+        assert_eq!(
+            expand("\\\\server\\share\\.data").map(|p| p.to_string_lossy().to_string()),
+            Some("\\\\server\\share\\.data".to_string())
+        );
+    }
+
+    /// 同上，unix 根路径（CI 的 Linux job 会跑到这条）。
+    #[cfg(not(windows))]
+    #[test]
+    fn expand_keeps_absolute_unix_paths() {
+        assert_eq!(
+            expand("/home/someone/.codex").map(|p| p.to_string_lossy().to_string()),
+            Some("/home/someone/.codex".to_string())
+        );
+    }
 
     #[test]
     fn expand_tilde_and_vars() {
