@@ -632,7 +632,8 @@ export default function App() {
           <span className="sp" />
           <span>
             共 {agents.length} 项：检测到 {detected.length}，已迁移{" "}
-            {agents.filter((a) => agentState(a) === "moved").length}，运行中{" "}
+            {agents.filter((a) => agentState(a) === "moved").length}，已卸载{" "}
+            {agents.filter((a) => agentState(a) === "orphan").length}，运行中{" "}
             {agents.filter((a) => a.running.length > 0).length}
           </span>
           {api.DEMO && <span className="badge b-warn">演示模式</span>}
