@@ -878,8 +878,12 @@ fn run_inner(plan: &Plan, cb: &mut dyn FnMut(Progress), opts: RunOptions) -> Mig
             ok: false,
             detail: e.clone(),
         });
-        // 回滚：把快照改回去
+        // 回滚：把快照改回去。**只有改名真的成功**才清掉 snapshot 字段
+        // —— 失败时快照还躺在原地，报告里必须留着这个路径给人手工处理。
         r.rolled_back = imp::rename_back(&snapshot, &src).is_ok();
+        if r.rolled_back {
+            r.snapshot = None;
+        }
         return r.fail(e);
     }
     r.steps.push(StepResult {
@@ -908,7 +912,10 @@ fn run_inner(plan: &Plan, cb: &mut dyn FnMut(Progress), opts: RunOptions) -> Mig
             });
             let _ = imp::remove_junction(&src);
             r.rolled_back = imp::rename_back(&snapshot, &src).is_ok();
-            r.snapshot = None;
+            // 同样只在回滚成功时清掉：失败的话快照还在，路径得留给用户
+            if r.rolled_back {
+                r.snapshot = None;
+            }
             return r.fail(e);
         }
     }
