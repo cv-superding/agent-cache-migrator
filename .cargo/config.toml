@@ -1,0 +1,11 @@
+# MinGW (x86_64-pc-windows-gnu) 专用链接参数。
+#
+# 背景：Tauri 的 lib crate 是 cdylib，Rust 会产生大量符号，mingw 的 ld 默认
+# 自动全部导出，导出序号超过 65535 后报：
+#   ld.exe: error: export ordinal too large: 104705
+#   collect2.exe: error: ld returned 1 exit status
+# 关掉「自动导出」，只保留 #[no_mangle] / .def 里显式点名的符号。
+#
+# 用 MSVC 工具链（x86_64-pc-windows-msvc）时不受影响，此段只对 gnu target 生效。
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-arg=-Wl,--exclude-all-symbols"]
