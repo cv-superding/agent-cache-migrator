@@ -406,7 +406,7 @@ export default function App() {
                   )}
                 </h1>
                 <p>
-                  {classHintL(cur.class)} · {cur.kind} ·{" "}
+                  {agentState(cur) === "orphan" ? t("orphanSub") : classHintL(cur.class)} · {cur.kind} ·{" "}
                   {t("dirsDetected", {
                     n: cur.paths.filter((p) => p.kind !== "missing").length,
                   })}
@@ -490,6 +490,9 @@ export default function App() {
                   });
                 }}
               />
+              {/* 应用已经卸载、只剩缓存时，迁移 / 目标盘两张卡片没有意义 —— 只留清理 */}
+              {agentState(cur) !== "orphan" && (
+                <>
               <DestCard
                 drives={drives}
                 destRoot={destRoot}
@@ -534,8 +537,10 @@ export default function App() {
                   });
                 }}
               />
+                </>
+              )}
 
-              {cur.envRelocate && (
+              {cur.envRelocate && agentState(cur) !== "orphan" && (
                 <div className="note info">
                   这个 Agent 官方支持用环境变量重定位：<code>{cur.envRelocate.env}</code>
                   {cur.envRelocate.note ? ` —— ${cur.envRelocate.note}` : ""}。
@@ -673,7 +678,8 @@ function Row({ k, v }: { k: string; v: ReactNode }) {
 }
 
 function badgeOf(s: ReturnType<typeof agentState>): string {
-  return s === "moved" ? "b-ok" : s === "free" ? "b-gray" : "b-gray";
+  // 已卸载：琥珀色提醒 —— 不是「未迁移」那种中性灰
+  return s === "moved" ? "b-ok" : s === "orphan" ? "b-warn" : "b-gray";
 }
 
 /** 当前状态卡片。 */
@@ -797,15 +803,20 @@ function StatusCard({
           {t("absentNote")}
         </div>
       )}
+      {st === "orphan" && (
+        <div className="note warn" style={{ marginTop: 11 }}>
+          {t("orphanNote")}
+        </div>
+      )}
 
-      {/* 清理缓存 —— 卸载残留清完就落回「未安装」 */}
+      {/* 清理缓存 —— 卸载残留 / 想重置时用；已卸载状态把它提为主操作 */}
       {a.detected && onPurge && (
         <div className="purgebar">
           <span className="hint">
             {a.running.length > 0 ? t("purgeRunning") : t("purgeHint")}
           </span>
           <button
-            className="btn dangerghost"
+            className={`btn ${st === "orphan" ? "pri danger" : "dangerghost"}`}
             disabled={!!purging || a.running.length > 0}
             onClick={() => onPurge(a.id)}
           >

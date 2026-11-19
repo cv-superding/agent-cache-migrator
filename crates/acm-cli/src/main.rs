@@ -222,10 +222,11 @@ fn print_report(all: &[acm_core::DetectedAgent], measured: bool) {
     println!("{LINE}");
     let detected = all.iter().filter(|a| a.detected).count();
     let moved = all.iter().filter(|a| a.state() == "moved").count();
+    let orphan = all.iter().filter(|a| a.state() == "orphan").count();
     let running = all.iter().filter(|a| !a.running.is_empty()).count();
     let broken = all.iter().filter(|a| !a.broken_links.is_empty()).count();
     println!(
-        "共 {} 项：检测到 {detected}，已迁移 {moved}，运行中 {running}，有断链 {broken}",
+        "共 {} 项：检测到 {detected}，已迁移 {moved}，已卸载 {orphan}，运行中 {running}，有断链 {broken}",
         all.len()
     );
 }

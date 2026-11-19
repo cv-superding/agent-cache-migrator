@@ -21,20 +21,23 @@ function m(bytes: number, files: number, capped = false) {
   return { files, bytes, capped };
 }
 
-const DEFS_RAW: Omit<AgentDef, "category">[] = [
+const DEFS_RAW: Omit<AgentDef, "category" | "install">[] = [
   { id: "workbuddy-cn", name: "WorkBuddy 国内版", vendor: "腾讯", kind: "electron", class: "normal", paths: ["~/.workbuddy"], updater: ["@genieworkbuddy-desktop-updater"], envRelocate: null, processes: ["WorkBuddy.exe"], skip: [], runtimeLinks: [], note: null },
   { id: "codex", name: "Codex CLI", vendor: "OpenAI", kind: "cli", class: "normal", paths: ["~/.codex"], updater: [], envRelocate: { env: "CODEX_HOME", note: "官方支持" }, processes: ["codex*"], skip: [], runtimeLinks: [], note: null },
 ];
 
 /** 演示数据里哪些不是 Agent（与 agents.toml 的 `category` 对齐）。 */
 const NON_AGENT = new Set(["npm-cache"]);
+/** 演示数据里哪些「已经卸载、只剩缓存」（与 agents.toml 的 `install` 判定对齐）。 */
+const UNINSTALLED = new Set(["utools", "trae-intl"]);
 
 export const DEFS: AgentDef[] = DEFS_RAW.map((d) => ({
   ...d,
   category: NON_AGENT.has(d.id) ? "cache" : "agent",
+  install: null,
 }));
 
-const AGENTS_RAW: Omit<DetectedAgent, "category">[] = [
+const AGENTS_RAW: Omit<DetectedAgent, "category" | "installed">[] = [
   {
     id: "workbuddy-cn",
     name: "WorkBuddy 国内版",
@@ -369,11 +372,67 @@ const AGENTS_RAW: Omit<DetectedAgent, "category">[] = [
     running: [],
     total: m(3.75 * GB, 37_638),
   },
+  // 下面两条是「应用早就卸载了、只剩缓存」的样子（`installed: false` → 状态 orphan）
+  {
+    id: "utools",
+    name: "uTools",
+    vendor: null,
+    kind: "electron",
+    class: "normal",
+    note: null,
+    envRelocate: null,
+    detected: true,
+    how: ["存在更新器目录（应用本体已不在）"],
+    paths: [
+      {
+        template: "%LOCALAPPDATA%\\utools-updater",
+        resolved: "C:\\Users\\29436\\AppData\\Local\\utools-updater",
+        kind: "dir",
+        isLink: false,
+        linkTarget: null,
+        linkBroken: false,
+        measure: m(0, 0),
+        sizeText: "0 B",
+      },
+    ],
+    updaters: ["C:\\Users\\29436\\AppData\\Local\\utools-updater"],
+    brokenLinks: [],
+    running: [],
+    total: m(0, 0),
+  },
+  {
+    id: "trae-intl",
+    name: "Trae 国际版",
+    vendor: "字节跳动",
+    kind: "electron",
+    class: "normal",
+    note: null,
+    envRelocate: null,
+    detected: true,
+    how: ["存在 %APPDATA%\\Trae"],
+    paths: [
+      {
+        template: "%APPDATA%\\Trae",
+        resolved: "C:\\Users\\29436\\AppData\\Roaming\\Trae",
+        kind: "dir",
+        isLink: false,
+        linkTarget: null,
+        linkBroken: false,
+        measure: m(72.1 * GB / 1024, 355),
+        sizeText: "72.09 MB",
+      },
+    ],
+    updaters: [],
+    brokenLinks: [],
+    running: [],
+    total: m(72.1 * GB / 1024, 355),
+  },
 ];
 
 export const AGENTS: DetectedAgent[] = AGENTS_RAW.map((a) => ({
   ...a,
   category: NON_AGENT.has(a.id) ? "cache" : "agent",
+  installed: UNINSTALLED.has(a.id) ? false : true,
 }));
 
 const GIB = 1024 ** 3;

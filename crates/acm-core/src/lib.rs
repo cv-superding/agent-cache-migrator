@@ -8,6 +8,7 @@
 //! - [`fsutil`] —— 重解析点判定、联接目标、体积统计
 //! - [`locks`] —— **精确占用检测**（Windows Restart Manager：谁锁着这个目录）
 //! - [`procs`] —— 进程探测（按名字匹配，作为兜底）
+//! - [`install`] —— **装没装**（卸载清单 / 可执行文件），用来识别「已卸载只剩缓存」
 //! - [`migrate`] —— **迁移内核**：复制 → 校验 → 快照 → 建联接 → 验证（含回滚）
 //! - [`purge`] —— **清理缓存**：把卸载残留 / 想重置的数据目录移入回收站
 //! - [`syscmd`] —— 子进程的**统一入口**（Windows 上关掉子进程控制台窗口）
@@ -21,6 +22,7 @@ pub mod envvar;
 pub mod fsutil;
 pub mod globs;
 pub mod hash;
+pub mod install;
 pub mod locks;
 pub mod migrate;
 pub mod model;
@@ -32,4 +34,4 @@ pub mod syscmd;
 pub use agents::{detect, detect_all, detect_with, load, parse, DetectOpts, BUILTIN_TOML};
 pub use locks::Holder;
 pub use migrate::{MigrateReport, Plan, Progress, Snapshot};
-pub use model::{AgentDef, DetectedAgent, PathHit, RegistryFile};
+pub use model::{AgentDef, DetectedAgent, InstallHint, PathHit, RegistryFile};

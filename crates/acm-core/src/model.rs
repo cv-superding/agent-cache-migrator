@@ -69,6 +69,23 @@ pub struct AgentDef {
 
     #[serde(default)]
     pub note: Option<String>,
+
+    /// 「本机还装没装」的判定线索。**不配** = 不判断（界面不会说「已卸载」）。
+    #[serde(default)]
+    pub install: Option<InstallHint>,
+}
+
+/// 判定「装没装」的线索。
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all(serialize = "camelCase"))]
+pub struct InstallHint {
+    /// Windows 卸载清单里的 DisplayName（大小写不敏感；可写「全名」或
+    /// 「名字 + 版本号前缀」，见 `install::matches_display_name`）
+    #[serde(default)]
+    pub uninstall: Vec<String>,
+    /// 可执行文件路径模板（存在 = 装着）—— 比卸载清单更硬的证据
+    #[serde(default)]
+    pub exe: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -105,8 +122,11 @@ pub struct DetectedAgent {
     pub note: Option<String>,
     pub env_relocate: Option<EnvRelocate>,
 
-    /// 综合判定：装了没
+    /// 综合判定：装了没（数据目录 / 更新器还在）
     pub detected: bool,
+    /// 应用**本身**还装没装：`Some(false)` = 已经卸载、只剩缓存；
+    /// `None` = 注册表里没配线索，判断不了（界面按老行为处理）
+    pub installed: Option<bool>,
     /// 判定依据（给用户看的，别让他猜）
     pub how: Vec<String>,
 
@@ -145,7 +165,8 @@ pub struct BrokenLink {
 }
 
 impl DetectedAgent {
-    /// **迁移状态**：`moved`（已迁移）/ `free`（未迁移）/ `absent`（没装）。
+    /// **迁移状态**：`moved`（已迁移）/ `free`（未迁移）/ `orphan`（应用已卸载、
+    /// 只剩缓存）/ `absent`（没装、也没残留）。
     ///
     /// 🔴 刻意**不**把「正在运行」混进来 —— 那是另一个维度的事实。
     /// 早先把 running 优先返回，导致「已迁移但正在跑」的条目被算成没迁移，
@@ -153,6 +174,10 @@ impl DetectedAgent {
     pub fn state(&self) -> &'static str {
         if !self.detected {
             return "absent";
+        }
+        // 应用都不在了，还谈迁移状态没意义 —— 先告诉用户「这是残留，可以清」
+        if self.installed == Some(false) {
+            return "orphan";
         }
         if self.paths.iter().any(|p| p.is_link && !p.link_broken) {
             return "moved";
@@ -164,6 +189,7 @@ impl DetectedAgent {
     pub fn state_label(&self) -> &'static str {
         match self.state() {
             "moved" => "已迁移",
+            "orphan" => "已卸载",
             "free" => "未迁移",
             _ => "未检测到",
         }
@@ -199,6 +225,7 @@ mod state_tests {
             note: None,
             env_relocate: None,
             detected,
+            installed: Some(true),
             how: Vec::new(),
             paths: hits,
             updaters: Vec::new(),

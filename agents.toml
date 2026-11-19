@@ -57,6 +57,13 @@
 #  runtime_links 预期是「目录或联接」的路径。若是**断链的联接**会告警
 #               （重装后指向消失的常见坑，会让应用每次启动都重做准备工作）
 #  note         界面上给用户的提示（可选）
+#  install      判定「应用本身还装没装」的线索（**不配 = 不判断**，界面不会说「已卸载」）
+#               { uninstall = ["uTools"], exe = ["%LOCALAPPDATA%/Programs/uTools/uTools.exe"] }
+#               uninstall：Windows 卸载清单的 DisplayName（大小写不敏感，只认「全等」或
+#                          「名字 + 空格 + 数字版本号」——`ZCode` 命中 `ZCode 3.18.2`，
+#                          但 `Trae` **不会**命中 `TRAE CN (User)`）
+#               exe：可执行文件路径，存在即「装着」（比卸载清单更硬）
+#               判否 → 界面标「已卸载 · 只剩缓存」，一条「清理缓存」就能删掉残留
 # ============================================================================
 
 schema_version = 1
@@ -147,6 +154,8 @@ kind     = "electron"
 class    = "normal"
 paths    = ["%APPDATA%/Trae CN"]
 processes = ["Trae.exe"]
+# 卸载清单里的 DisplayName 就是「TRAE CN (User)」（大小写不敏感）
+install  = { uninstall = ["TRAE CN (User)"] }
 
 [[agent]]
 id       = "zcode"
@@ -156,6 +165,7 @@ class    = "normal"
 paths    = ["%APPDATA%/ZCode"]
 updater  = ["@zcodedesktop-updater"]   # 注意：appId 是 zcodedesktop，数据目录却是 ZCode
 processes = ["ZCode.exe"]
+install  = { uninstall = ["ZCode"] }   # 卸载清单：「ZCode 3.18.2」
 
 [[agent]]
 id       = "deepseek"
@@ -167,6 +177,8 @@ paths    = ["%APPDATA%/@deepseek-ai"]   # 注意：带 @ 前缀；里面是 dsh-
 updater  = ["@deepseek-aidsh-desktop-updater"]
 processes = ["DeepSeek Harness.exe", "DeepSeekHarness.exe"]
 note     = "产品名是 DeepSeek Harness（DSH），不是 DeepSeek 网页版客户端；数据目录名带 @ 前缀。装完没启动过时只有更新器目录。"
+# 卸载清单里叫「DeepSeek Harness 0.2.1-rc.1」——版本号由「空格+数字」规则自动吃掉
+install  = { uninstall = ["DeepSeek Harness"] }
 
 [[agent]]
 id       = "doubao"
@@ -179,6 +191,7 @@ class    = "normal"
 #    public_config.json —— 只写前者会让界面上显示成「1.89 KB」。
 paths    = ["%LOCALAPPDATA%/Doubao", "%APPDATA%/Doubao"]
 processes = ["Doubao.exe"]
+install  = { uninstall = ["豆包"] }
 note     = "大头在 LocalAppData 的 User Data；Roaming 下那个只有配置。迁移只搬第一个存在的目录。"
 
 
@@ -210,6 +223,7 @@ kind     = "cli"
 class    = "safe"
 paths    = ["~/.ollama"]
 processes = ["ollama*"]
+install  = { uninstall = ["Ollama version"] }   # 卸载清单：「Ollama version 0.33.2」
 note     = "模型文件是大头；正在跑的模型进程会占用 models 目录，迁移前先 ollama stop。"
 
 [[agent]]
@@ -263,6 +277,8 @@ class    = "normal"
 paths    = ["%APPDATA%/uTools"]
 updater  = ["utools-updater"]
 processes = ["uTools.exe"]
+# 装没装：卸载清单里的 DisplayName（uTools 卸载后这条就没了 → 判为「已卸载只剩缓存」）
+install  = { uninstall = ["uTools"] }
 
 
 [[agent]]
@@ -293,6 +309,9 @@ kind     = "electron"
 class    = "normal"
 paths    = ["%APPDATA%/Trae"]
 processes = ["Trae.exe"]
+# ⚠️ 必须写全名式的「Trae」而**不能**写 "Trae" 前缀去匹配 TRAE CN (User)：
+#    名字匹配只认「全等」或「名字 + 空格 + 数字版本号」
+install  = { uninstall = ["Trae"] }
 
 [[agent]]
 id       = "codebuddy-intl"

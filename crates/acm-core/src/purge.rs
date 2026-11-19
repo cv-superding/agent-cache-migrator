@@ -228,6 +228,7 @@ mod tests {
             skip: Vec::new(),
             runtime_links: Vec::new(),
             note: None,
+            install: None,
         }
     }
 

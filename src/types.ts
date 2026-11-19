@@ -34,6 +34,12 @@ export interface EnvRelocate {
   note: string | null;
 }
 
+/** 「应用本身还装没装」的判定线索（`agents.toml` 的 `install`）。 */
+export interface InstallHint {
+  uninstall: string[];
+  exe: string[];
+}
+
 /** 注册表条目（`agents.toml` 的一条）。 */
 export interface AgentDef {
   id: string;
@@ -51,6 +57,7 @@ export interface AgentDef {
   skip: string[];
   runtimeLinks: string[];
   note: string | null;
+  install: InstallHint | null;
 }
 
 export interface DetectedAgent {
@@ -64,6 +71,8 @@ export interface DetectedAgent {
   note: string | null;
   envRelocate: EnvRelocate | null;
   detected: boolean;
+  /** 应用本身还装没装：false = 已卸载只剩缓存；null = 判断不了 */
+  installed: boolean | null;
   how: string[];
   paths: PathHit[];
   updaters: string[];
@@ -169,17 +178,25 @@ export interface PurgeReport {
 }
 
 /** 迁移状态的展示口径（与 Rust `DetectedAgent::state()` 一致）。 */
-export type AgentState = "moved" | "free" | "absent";
+export type AgentState = "moved" | "free" | "orphan" | "absent";
 
 export function agentState(a: DetectedAgent): AgentState {
   if (!a.detected) return "absent";
+  // 应用都不在了，还谈「迁移过没」没意义 —— 这是「已卸载，只剩缓存」
+  if (a.installed === false) return "orphan";
   // 🔴 断链不算已迁移 —— 数据其实没接上
   if (a.paths.some((p) => p.isLink && !p.linkBroken)) return "moved";
   return "free";
 }
 
 export function stateLabel(s: AgentState): string {
-  return s === "moved" ? "已迁移" : s === "free" ? "未迁移" : "未检测到";
+  return s === "moved"
+    ? "已迁移"
+    : s === "free"
+      ? "未迁移"
+      : s === "orphan"
+        ? "已卸载"
+        : "未检测到";
 }
 
 /** 人类可读体积。与 Rust `fsutil::human` 保持同样的口径（1024 进制、两位小数）。 */

@@ -83,6 +83,8 @@ category  = "agent"                   # agent（默认）| cache（纯缓存/工
 paths     = ["~/.codex"]              # 支持 ~ / %APPDATA% / %LOCALAPPDATA%
 processes = ["codex*"]                # 迁移前要退出的进程，可留空
 skip      = ["**/node_modules"]       # 可选：这些不进校验
+# 可选：判断「应用本身还装没装」（不配 = 不判断，界面不会说「已卸载」）
+install   = { uninstall = ["Codex"], exe = ["%LOCALAPPDATA%/Programs/codex/codex.exe"] }
 ```
 
 内置一份 [`agents.toml`](agents.toml)，用户目录下的同名文件可以**覆盖或追加**。

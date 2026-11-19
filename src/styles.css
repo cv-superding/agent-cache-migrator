@@ -256,6 +256,21 @@ code {
   border: 1.5px solid #d3dae4;
 }
 
+/* 已卸载、只剩缓存：空心琥珀点 —— 和数据没了不一样，这是「应用不在、数据还在」 */
+.dot.orphan {
+  background: transparent;
+  border: 1.5px solid #e0a437;
+}
+
+/* 侧栏里的「已卸载」条目：图标降饱和但不至于像「未安装」那样灰掉 */
+.item.orph .aic {
+  filter: grayscale(0.55);
+  opacity: 0.9;
+}
+.item.orph .nm {
+  color: var(--muted);
+}
+
 .sidefoot {
   padding: 10px 4px 2px;
   margin-top: 6px;

@@ -53,12 +53,18 @@ export function Sidebar({
   onRescan: () => void;
   version?: string;
 }) {
-  // 侧栏分三组：Agent / 缓存目录（不是 Agent）/ 未安装。
+  // 侧栏分四组：Agent / 已卸载·只剩缓存 / 缓存目录（不是 Agent）/ 未安装。
   // `category` 来自 agents.toml，别用名字或 kind 猜 —— npm 缓存就不是 Agent。
   const present = agents.filter((a) => a.detected);
-  const agentsOn = present.filter((a) => a.category !== "cache");
   const cachesOn = present.filter((a) => a.category === "cache");
+  const orphans = present.filter(
+    (a) => a.category !== "cache" && a.installed === false,
+  );
+  const agentsOn = present.filter(
+    (a) => a.category !== "cache" && a.installed !== false,
+  );
   const absent = agents.filter((a) => !a.detected);
+  const grouped = cachesOn.length > 0 || orphans.length > 0;
   useLang(); // 语言切换时重渲染
 
   return (
@@ -83,8 +89,8 @@ export function Sidebar({
           </div>
         )}
 
-        {/* 只有「混着缓存」时才多出一层分组标签 —— 全是 Agent 时不多余提示 */}
-        {cachesOn.length > 0 && (
+        {/* 分组标签只在「确实混着别的类别」时出现，纯 Agent 列表不多余提示 */}
+        {grouped && (
           <div className="navlabel sub">{t("groupAgents", { n: agentsOn.length })}</div>
         )}
         {agentsOn.map((a) => (
@@ -107,6 +113,26 @@ export function Sidebar({
             />
           </button>
         ))}
+
+        {/* 应用已经卸载、只剩数据 —— 独立成组，别混在「Agent」里让人以为还装着 */}
+        {orphans.length > 0 && (
+          <>
+            <div className="navlabel sub">{t("groupOrphans", { n: orphans.length })}</div>
+            {orphans.map((a) => (
+              <button
+                key={a.id}
+                className={`item orph${selected === a.id ? " on" : ""}`}
+                onClick={() => onPick(a.id)}
+                title={a.paths.map((p) => p.resolved).join("\n")}
+              >
+                <AgentIcon id={a.id} name={a.name} size={22} />
+                <span className="nm">{a.name}</span>
+                <span className="sz">{a.total.bytes > 0 ? human(a.total.bytes) : ""}</span>
+                <span className="dot orphan" title={stateLabelL(agentState(a))} />
+              </button>
+            ))}
+          </>
+        )}
 
         {cachesOn.length > 0 && (
           <div className="navlabel sub">{t("groupCaches", { n: cachesOn.length })}</div>

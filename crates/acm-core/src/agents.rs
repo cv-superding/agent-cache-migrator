@@ -4,6 +4,7 @@
 //! 内置一份（编译进二进制），用户目录同名文件可覆盖或追加。
 
 use crate::fsutil::{self, EntryKind, Measure};
+use crate::install;
 use crate::model::{AgentDef, BrokenLink, DetectedAgent, PathHit, RegistryFile};
 use crate::paths;
 use crate::procs;
@@ -122,6 +123,17 @@ pub fn detect(def: &AgentDef, opts: &DetectOpts) -> DetectedAgent {
 /// `procs` 是「当前运行的进程名」快照 —— 它是纯查表输入，所以同一份快照
 /// 可以喂给所有 Agent，子进程只起一次。
 pub fn detect_with(def: &AgentDef, opts: &DetectOpts, procs: &[String]) -> DetectedAgent {
+    detect_with_install(def, opts, procs, &install::Snapshot::take())
+}
+
+/// 检测一个 Agent，进程表 + 卸载清单都由调用方传入（`detect_all` 用这个，
+/// 免得每个条目都去扫一遍注册表）。
+pub fn detect_with_install(
+    def: &AgentDef,
+    opts: &DetectOpts,
+    procs: &[String],
+    installed: &install::Snapshot,
+) -> DetectedAgent {
     let mut how: Vec<String> = Vec::new();
     let mut hits: Vec<PathHit> = Vec::new();
     let mut total = Measure::default();
@@ -192,6 +204,22 @@ pub fn detect_with(def: &AgentDef, opts: &DetectOpts, procs: &[String]) -> Detec
 
     let detected = hits.iter().any(|h| h.kind != "missing") || !updaters.is_empty();
 
+    // 应用本身还装没装 —— 只在注册表配了 install 线索时才判断（否则 None）
+    let is_installed = match &def.install {
+        Some(hint) => {
+            let verdict = installed.is_installed(&hint.uninstall, &hint.exe);
+            match verdict {
+                Some(true) => how.push("应用仍然装在本机".into()),
+                Some(false) if detected => {
+                    how.push("卸载清单里已经没有它了（下面这些是残留缓存）".into())
+                }
+                _ => {}
+            }
+            verdict
+        }
+        None => None,
+    };
+
     DetectedAgent {
         id: def.id.clone(),
         name: def.name.clone(),
@@ -202,6 +230,7 @@ pub fn detect_with(def: &AgentDef, opts: &DetectOpts, procs: &[String]) -> Detec
         note: def.note.clone(),
         env_relocate: def.env_relocate.clone(),
         detected,
+        installed: is_installed,
         how,
         paths: hits,
         updaters,
@@ -312,7 +341,11 @@ pub fn expand_glob(base: &Path, pattern: &str) -> Vec<PathBuf> {
 /// 桌面上弹一个控制台窗口。
 pub fn detect_all(defs: &[AgentDef], opts: &DetectOpts) -> Vec<DetectedAgent> {
     let procs = procs::snapshot();
-    defs.iter().map(|d| detect_with(d, opts, &procs)).collect()
+    // 卸载清单也只扫一次（三个注册表位置 /s 枚举）
+    let installed = install::Snapshot::take();
+    defs.iter()
+        .map(|d| detect_with_install(d, opts, &procs, &installed))
+        .collect()
 }
 
 #[cfg(test)]

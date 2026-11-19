@@ -55,6 +55,7 @@ const zh = {
   detectedSummary: "已安装 {n} 项 · 共 {total} 项",
   groupAgents: "Agent（{n}）",
   groupCaches: "缓存目录（{n}）",
+  groupOrphans: "已卸载 · 只剩缓存（{n}）",
   cacheTag: "缓存",
   noneDetected: "没有检测到任何 Agent。",
   notInstalled: "未安装（{n}）",
@@ -72,6 +73,10 @@ const zh = {
   stateMoved: "已迁移",
   stateFree: "未迁移",
   stateAbsent: "未检测到",
+  stateOrphan: "已卸载",
+  orphanNote:
+    "这个应用已经不在本机了（卸载清单里没有它），这里只剩它留下的数据。点下面的「清理缓存」把它移入回收站，再扫一次就彻底干净了。",
+  orphanSub: "本机已卸载，只剩数据",
   // 状态卡片
   statusTitle: "当前状态",
   statusSub: "只读检测，不改任何东西",
@@ -199,6 +204,7 @@ const en: Record<DictKey, string> = {
   detectedSummary: "{n} of {total} installed",
   groupAgents: "Agents ({n})",
   groupCaches: "Cache dirs ({n})",
+  groupOrphans: "Uninstalled · leftovers ({n})",
   cacheTag: "Cache",
   noneDetected: "No agents detected.",
   notInstalled: "Not installed ({n})",
@@ -214,6 +220,10 @@ const en: Record<DictKey, string> = {
   stateMoved: "Migrated",
   stateFree: "Not migrated",
   stateAbsent: "Not found",
+  stateOrphan: "Uninstalled",
+  orphanNote:
+    "This app is no longer installed (there is no uninstall entry for it) — only its data is left. Hit \"Purge cache\" below to move it to the Recycle Bin; one rescan and it is gone for good.",
+  orphanSub: "Uninstalled — data left",
   statusTitle: "Current state",
   statusSub: "Read-only detection, changes nothing",
   rowPaths: "Data dirs",
@@ -349,7 +359,10 @@ export function LangSwitch() {
 
 /** AgentState 的双语标签（types.ts 里的 stateLabel 是中文单语）。 */
 export function stateLabelL(s: string): string {
-  return s === "moved" ? t("stateMoved") : s === "free" ? t("stateFree") : t("stateAbsent");
+  if (s === "moved") return t("stateMoved");
+  if (s === "free") return t("stateFree");
+  if (s === "orphan") return t("stateOrphan");
+  return t("stateAbsent");
 }
 
 /** class 的双语提示。 */
