@@ -1539,11 +1539,22 @@ mod imp {
                 Ok(0) => break, // EOF
                 Ok(_) => {
                     if buf.iter().any(|b| !b.is_ascii_whitespace()) {
+                        let line = String::from_utf8_lossy(&buf).trim().to_string();
+                        // 🔴 robocopy 的报错行（`… ERROR 5 (0x00000005) Copying File …`）
+                        // **不是**「复制了一个文件」：算进进度会让百分比虚高，
+                         // 还会把真正的错误行挤出「最近 3 行」缓冲。
+                        if is_robo_error_line(&line) {
+                            if last.len() == 3 {
+                                last.pop_front();
+                            }
+                            last.push_back(line);
+                            continue;
+                        }
                         n += 1;
                         if last.len() == 3 {
                             last.pop_front();
                         }
-                        last.push_back(String::from_utf8_lossy(&buf).trim().to_string());
+                        last.push_back(line);
                         on_file(n);
                     }
                 }
@@ -1570,74 +1581,83 @@ mod imp {
         }
     }
 
+    /// 这一行是不是 robocopy 的报错行（而不是「复制了某某文件」）。
+    fn is_robo_error_line(line: &str) -> bool {
+        let up = line.to_ascii_uppercase();
+        up.contains("ERROR ") || up.contains("ERROR:") || up.contains("ERROR CODE")
+    }
+
     /// 还差多少个文件没搬过去（只数**源树里**的）。
+    ///
+    /// 🔴 **不再解析 robocopy 的 `/L` 文本输出**，改成自己走一遍源树逐文件比对。
+    /// 原因有三条，都是真踩过的：
+    /// 1. robocopy 的输出按**控制台代码页**（中文机器上是 GBK）编码，用 UTF-8 读出来
+    ///    中文路径是乱码 → `skip` glob 匹配不上、路径也无法用于任何判断；
+    /// 2. `/L` 的清单里会混进「目标盘多出来的文件」（它打的是目标路径），得靠
+    ///    「这行是不是在源根之下」过滤 —— 一旦路径本身带空格/引号就很脆；
+    /// 3. 走一遍源树本来就要给 `measure` 做，代价和 `/L` 是同量级的。
+    ///
+    /// 判据与 robocopy 的 `/E` 收敛条件一致：**大小相同 + 修改时间相同** 才算已搬过去
+    /// （时间给 3 秒容差，照顾 FAT/exFAT 的 2 秒时间戳粒度）。
     ///
     /// `skip`：校验阶段忽略的 glob（相对源根的路径命中即不计数）。
     /// 复制阶段不带这些排除 —— 多搬无害，缺的只是「不必一致」的约束。
     pub fn pending_count(src: &Path, dst: &Path, skip: &[String]) -> Result<u64, String> {
-        let s = src.to_string_lossy().to_string();
-        let d = dst.to_string_lossy().to_string();
-        let mut args: Vec<&str> = vec![s.as_str(), d.as_str()];
-        args.extend_from_slice(&ROBO_SAFE);
-        args.extend_from_slice(&ROBO_EXTRA);
-        // /L = 只列不复制；/NS /NC 只留路径
-        args.extend_from_slice(&["/L", "/NS", "/NC", "/NDL", "/NJH", "/NJS", "/NP"]);
-        for dir in ROBO_EXCLUDE_DIRS {
-            args.push("/XD");
-            args.push(dir);
+        let mut pending: u64 = 0;
+        let mut stack = vec![src.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let rd =
+                std::fs::read_dir(&dir).map_err(|e| format!("读 {} 失败：{e}", dir.display()))?;
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if fsutil::is_link(&p) {
+                    continue; // 重解析点：复制阶段 /XJ 跳过的，这里也不比
+                }
+                if is_system_dir(&p) {
+                    continue; // 与复制阶段的 /XD 对齐，否则永远「还差几个」
+                }
+                let Ok(md) = entry.metadata() else { continue };
+                if md.is_dir() {
+                    stack.push(p);
+                    continue;
+                }
+                let Ok(rel) = p.strip_prefix(src) else {
+                    continue;
+                };
+                if crate::globs::matches_any(rel, skip) {
+                    continue;
+                }
+                let same = match std::fs::metadata(dst.join(rel)) {
+                    Ok(dm) => dm.len() == md.len() && mtime_close(&dm, &md),
+                    Err(_) => false,
+                };
+                if !same {
+                    pending += 1;
+                }
+            }
         }
+        Ok(pending)
+    }
 
-        let out = run("robocopy", &args).map_err(|e| format!("调不起 robocopy：{e}"))?;
-        let text = String::from_utf8_lossy(&out.stdout);
-        let root_prefix = norm_root_prefix(src);
-        Ok(text
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .filter(|l| is_under_root(l, src))
-            // 校验排除：命中 skip glob 的相对路径不算「还没搬过去」
-            .filter(|l| {
-                // ⚠️ 必须先绑定成命名变量：`&norm(l)[..]` 是对临时值做索引切片，
-                // 临时值活不过这条 let 语句（索引表达式不享受生命周期延长），
-                // 直接写会让 rel 悬垂 —— E0716。
-                let full = norm(l);
-                let rel = &full[root_prefix.len()..];
-                !crate::globs::matches_any(Path::new(rel), skip)
+    /// 永远不参与复制/校验的系统目录（源根被配成盘符时才会遇到）。
+    fn is_system_dir(p: &Path) -> bool {
+        p.file_name()
+            .map(|n| {
+                let n = n.to_string_lossy().to_ascii_lowercase();
+                n == "$recycle.bin" || n == "system volume information"
             })
-            .count() as u64)
+            .unwrap_or(false)
     }
 
-    fn norm(s: &str) -> String {
-        s.trim()
-            .trim_start_matches(r"\\?\")
-            .replace('/', "\\")
-            .to_ascii_lowercase()
-    }
-
-    /// 归一化后的源根（不带尾分隔符），用于从清单行里剥出相对路径。
-    fn norm_root_prefix(root: &Path) -> String {
-        let r = norm(&root.to_string_lossy());
-        r.trim_end_matches('\\').to_string()
-    }
-
-    /// 🔴 只被 Windows 用到 ⇒ 必须 cfg，否则 mac/linux 上是死代码、
-    /// 而 CI 开着 `-D warnings`，会直接挂（**且只在非 Windows 上暴露**）。踩过。
-    ///
-    /// 判据：这行路径确实以「源根目录」开头，且后面紧跟一个分隔符
-    /// （防止 `C:\Users\x\.codex2` 被误判成在 `C:\Users\x\.codex` 之下）。
-    fn is_under_root(line: &str, root: &Path) -> bool {
-        let norm = |s: &str| {
-            s.trim()
-                .trim_start_matches(r"\\?\")
-                .replace('/', "\\")
-                .to_ascii_lowercase()
-        };
-        let l = norm(line);
-        let r = norm(&root.to_string_lossy());
-        let r = r.trim_end_matches('\\');
-        if r.is_empty() {
+    /// 两个文件的修改时间是否「视为相同」（3 秒容差，覆盖 FAT 的 2 秒粒度）。
+    fn mtime_close(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+        let (Ok(x), Ok(y)) = (a.modified(), b.modified()) else {
+            // 有些文件系统读不到时间 —— 大小已经相等了，就按已复制处理，
+            // 免得出现「怎么都搬不完」的死循环。
             return true;
-        }
-        l.starts_with(r) && l.as_bytes().get(r.len()) == Some(&b'\\')
+        };
+        let diff = x.duration_since(y).or_else(|_| y.duration_since(x)).ok();
+        diff.map(|d| d.as_secs() <= 3).unwrap_or(true)
     }
 
     /// 原目录改名成快照。改名失败时会重试一次（杀软/索引服务常会短暂占用）。
@@ -1670,29 +1690,127 @@ mod imp {
             .map_err(|e| format!("回滚改名失败：{e}（快照仍在 {}）", snapshot.display()))
     }
 
-    /// 建目录联接。**不需要管理员权限**。
+    /// 建目录联接。
+    ///
+    /// 🔴 **不调 `cmd /C mklink /J`**：路径里只要带 `&`、`^`、`(`、`%` 这类 cmd
+    /// 元字符，整条命令行就会被重新解释（用户名/目录名里真会出现），
+    /// 结果是「建错位置」或「莫名其妙建不出来」。这里直接走 `FSCTL_SET_REPARSE_POINT`
+    /// 写重解析点 —— 和 `mklink /J` 底层是同一件事，不经过 shell，
+    /// 也**不需要管理员权限**。
     pub fn make_junction(link: &Path, target: &Path) -> Result<(), String> {
-        // mklink 是 cmd 内置命令，不是 exe —— 必须经 cmd /C。
-        // /J 是目录联接（不是符号链接），不需要管理员也不受开发者模式影响。
-        let out = run(
-            "cmd",
-            &[
-                "/C",
-                "mklink",
-                "/J",
-                &link.to_string_lossy(),
-                &target.to_string_lossy(),
-            ],
-        )
-        .map_err(|e| format!("调不起 cmd：{e}"))?;
-        if out.status.success() {
-            return Ok(());
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_WRITE, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::Storage::FileSystem::{
+            CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+        };
+        use windows_sys::Win32::System::IO::DeviceIoControl;
+
+        /// `CTL_CODE(FILE_DEVICE_FILE_SYSTEM=9, 41, METHOD_BUFFERED, FILE_ANY_ACCESS)`
+        const FSCTL_SET_REPARSE_POINT: u32 = 0x0009_00A4;
+        /// 目录联接（mount point）的重解析标签
+        const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA000_0003;
+
+        // 不校验目标是否存在 —— `mklink /J` 也允许建「断链」（指向一个当前不存在的目录），
+        // `repair` 正是靠这个去修断链；真有断链也会被后续的校验/回滚发现。
+        let wide = |p: &Path| -> Vec<u16> {
+            p.as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect()
+        };
+
+        // 联接必须挂在一个**空目录**上：先建出来。
+        std::fs::create_dir(link).map_err(|e| {
+            let hint = if e.kind() == std::io::ErrorKind::AlreadyExists {
+                "（该路径已存在 —— 先摘掉旧的联接或删掉它）"
+            } else {
+                ""
+            };
+            format!("建联接失败：准备目录 {} 出错：{e}{hint}", link.display())
+        })?;
+
+        let path_w = wide(link);
+        let handle = unsafe {
+            CreateFileW(
+                path_w.as_ptr(),
+                GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                0,
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            let _ = std::fs::remove_dir(link);
+            return Err(format!(
+                "建联接失败：打不开 {}（{}）",
+                link.display(),
+                std::io::Error::last_os_error()
+            ));
         }
-        Err(format!(
-            "建联接失败：{} {}",
-            String::from_utf8_lossy(&out.stdout).trim(),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ))
+
+        // `REPARSE_DATA_BUFFER` + `MOUNT_POINT_REPARSE_BUFFER`
+        // （🔴 两处靠读真联接的字节才确认的细节，踩过 `ERROR_INVALID_REPARSE_DATA (4392)`：
+        //   1. mount point 这个 union 成员**没有** `Flags` 字段（那是符号链接才有的）；
+        //   2. 两个名字各自**带 NUL 结尾**（长度字段不含 NUL），
+        //      打印名偏移 = 替代名长度 + 2 —— 这就是 `mklink /J` 建出来的真实布局）
+        //   u32 ReparseTag | u16 DataLength | u16 Reserved
+        //   u16 SubOffset | u16 SubLength | u16 PrintOffset | u16 PrintLength
+        //   WCHAR PathBuffer[]：`\??\C:\...` NUL `C:\...` NUL
+        let target_text = target
+            .to_string_lossy()
+            .trim_start_matches(r"\\?\")
+            .trim_end_matches('\\')
+            .to_string();
+        let substitute: Vec<u16> = format!(r"\??\{target_text}").encode_utf16().collect();
+        let print: Vec<u16> = target_text.encode_utf16().collect();
+        let sub_bytes = (substitute.len() * 2) as u16;
+        let print_bytes = (print.len() * 2) as u16;
+        let data_len = 8 + sub_bytes as usize + 2 + print_bytes as usize + 2;
+
+        let mut buf: Vec<u8> = Vec::with_capacity(8 + data_len);
+        buf.extend_from_slice(&IO_REPARSE_TAG_MOUNT_POINT.to_le_bytes());
+        buf.extend_from_slice(&(data_len as u16).to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes()); // Reserved
+        buf.extend_from_slice(&0u16.to_le_bytes()); // SubstituteNameOffset
+        buf.extend_from_slice(&sub_bytes.to_le_bytes());
+        buf.extend_from_slice(&(sub_bytes + 2).to_le_bytes()); // PrintNameOffset（跳过替代名的 NUL）
+        buf.extend_from_slice(&print_bytes.to_le_bytes());
+        for w in &substitute {
+            buf.extend_from_slice(&w.to_le_bytes());
+        }
+        buf.extend_from_slice(&0u16.to_le_bytes()); // 替代名 NUL
+        for w in &print {
+            buf.extend_from_slice(&w.to_le_bytes());
+        }
+        buf.extend_from_slice(&0u16.to_le_bytes()); // 打印名 NUL
+
+        let mut returned: u32 = 0;
+        let ok = unsafe {
+            DeviceIoControl(
+                handle,
+                FSCTL_SET_REPARSE_POINT,
+                buf.as_ptr() as *const core::ffi::c_void,
+                buf.len() as u32,
+                std::ptr::null_mut(),
+                0,
+                &mut returned,
+                std::ptr::null_mut(),
+            )
+        };
+        unsafe { CloseHandle(handle) };
+        if ok == 0 {
+            let e = std::io::Error::last_os_error();
+            let _ = std::fs::remove_dir(link);
+            return Err(format!(
+                "建联接失败：{} → {}（{e}）",
+                link.display(),
+                target.display()
+            ));
+        }
+        Ok(())
     }
 
     /// 摘掉联接。
@@ -1818,27 +1936,42 @@ mod imp {
     mod tests {
         use super::*;
 
+        /// 校验收敛判据：**大小 + 修改时间**一致才算「搬过去了」。
+        ///
+        /// 这条替代了原先「解析 robocopy `/L` 文本」的实现 —— 那套在中文机器上
+        /// 会因为控制台代码页（GBK）导致路径乱码，`skip` glob 直接失效。
         #[test]
-        fn is_under_root_requires_separator_boundary() {
-            let root = Path::new(r"C:\Users\x\.codex");
-            assert!(is_under_root(r"C:\Users\x\.codex\a.txt", root));
-            assert!(is_under_root(r"\\?\C:\Users\x\.codex\a.txt", root));
-            assert!(is_under_root(r"c:\users\x\.codex\sub\b.bin", root));
-            assert!(
-                is_under_root(r"C:/Users/x/.codex/a.txt", root),
-                "正斜杠也要认"
-            );
-            assert!(
-                is_under_root("  C:\\Users\\x\\.codex\\a  ", root),
-                "要 trim 缩进"
-            );
+        fn pending_count_compares_size_and_mtime() {
+            let base = scratch("pending");
+            let src = base.join("src");
+            let dst = base.join("dst");
+            std::fs::create_dir_all(src.join("sub")).unwrap();
+            std::fs::create_dir_all(dst.join("sub")).unwrap();
 
-            // 🔴 前缀相同但**不是**子路径 —— 没有分隔符边界
-            assert!(!is_under_root(r"C:\Users\x\.codex2\a.txt", root));
-            assert!(!is_under_root(r"C:\Users\x\.codex-old\a.txt", root));
+            std::fs::write(src.join("a.bin"), b"hello").unwrap();
+            std::fs::copy(src.join("a.bin"), dst.join("a.bin")).unwrap();
+            std::fs::write(src.join("sub/b.bin"), vec![1u8; 64]).unwrap();
+            std::fs::copy(src.join("sub/b.bin"), dst.join("sub/b.bin")).unwrap();
+            assert_eq!(pending_count(&src, &dst, &[]).unwrap(), 0, "完整复制应当 0 差异");
 
-            // 🔴 目标盘路径必须被排除（这是「迁移永远失败」的真凶）
-            assert!(!is_under_root(r"F:\.AgentCache\codex\a.txt", root));
+            // 目标缺一个 / 大小不对 → 都要算「还没搬」
+            std::fs::remove_file(dst.join("a.bin")).unwrap();
+            std::fs::write(dst.join("sub/b.bin"), vec![1u8; 32]).unwrap();
+            assert_eq!(pending_count(&src, &dst, &[]).unwrap(), 2);
+
+            // skip 命中的条目不计入（日志类是「不必一致」）
+            let skip = vec!["sub/**".to_string()];
+            assert_eq!(pending_count(&src, &dst, &skip).unwrap(), 1);
+
+            let _ = std::fs::remove_dir_all(&base);
+        }
+
+        /// 系统目录永远不该把校验卡死（复制阶段 `/XD` 就不搬它们）。
+        #[test]
+        fn system_dirs_are_never_counted() {
+            assert!(is_system_dir(Path::new(r"F:\$RECYCLE.BIN")));
+            assert!(is_system_dir(Path::new(r"F:\System Volume Information")));
+            assert!(!is_system_dir(Path::new(r"F:\AgentCache\codex")));
         }
 
         /// 复制阶段 `/XJ` 会跳过源树里的联接 —— 迁移后必须在目标里**按原样重建**，
