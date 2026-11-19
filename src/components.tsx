@@ -7,24 +7,30 @@ import type { ReactNode } from "react";
 import type { DetectedAgent } from "./types";
 import { agentState, human } from "./types";
 import { t, useLang, LangSwitch, stateLabelL } from "./i18n";
+import { AgentIcon, AppMark } from "./icons";
 
 // ---------------------------------------------------------------- 卡片
 
 export function Card({
   title,
   sub,
+  right,
   children,
 }: {
   title: string;
   sub?: string;
+  /** 标题右侧的附加内容（统计、按钮之类） */
+  right?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <section className="card">
-      <h2>
-        {title}
+      <header className="cardhead">
+        <span className="cardbar" />
+        <h2>{title}</h2>
         {sub && <span className="sub">{sub}</span>}
-      </h2>
+        {right && <span className="cardright">{right}</span>}
+      </header>
       <div className="inner">{children}</div>
     </section>
   );
@@ -34,7 +40,6 @@ export function Card({
 
 export function Sidebar({
   agents,
-  colors,
   selected,
   scanning,
   onPick,
@@ -42,7 +47,6 @@ export function Sidebar({
   version,
 }: {
   agents: DetectedAgent[];
-  colors: Record<string, string>;
   selected: string | null;
   scanning: boolean;
   onPick: (id: string) => void;
@@ -56,8 +60,8 @@ export function Sidebar({
   return (
     <aside className="side">
       <div className="brand">
-        <div className="logo">⬒</div>
-        <div>
+        <AppMark size={34} />
+        <div className="brandtx">
           <b>AgentCache</b>
           <span>{t("brandSub")}</span>
         </div>
@@ -65,17 +69,12 @@ export function Sidebar({
 
       <div className="nav">
         <div className="navlabel">
-          {t("detectedCount", { n: present.length })}
-          {scanning && (
-            <>
-              {" "}
-              <span className="spin" style={{ marginRight: 0 }} />
-            </>
-          )}
+          <span>{t("detectedCount", { n: present.length })}</span>
+          {scanning && <span className="spin" style={{ marginRight: 0 }} />}
         </div>
 
         {present.length === 0 && !scanning && (
-          <div className="opt" style={{ padding: "8px 9px", color: "var(--muted)" }}>
+          <div className="opt" style={{ padding: "8px 10px", color: "var(--muted)" }}>
             {t("noneDetected")}
           </div>
         )}
@@ -87,9 +86,7 @@ export function Sidebar({
             onClick={() => onPick(a.id)}
             title={a.paths.map((p) => p.resolved).join("\n")}
           >
-            <span className="ic" style={{ background: colors[a.id] ?? "#94a3b8" }}>
-              {glyph(a)}
-            </span>
+            <AgentIcon id={a.id} name={a.name} size={22} />
             <span className="nm">{a.name}</span>
             <span className="sz">{a.total.bytes > 0 ? human(a.total.bytes) : ""}</span>
             <span
@@ -109,14 +106,11 @@ export function Sidebar({
             {absent.map((a) => (
               <button
                 key={a.id}
-                className="item"
+                className={`item off${selected === a.id ? " on" : ""}`}
                 onClick={() => onPick(a.id)}
-                style={{ opacity: 0.55 }}
                 title={a.paths.map((p) => p.resolved).join("\n")}
               >
-                <span className="ic" style={{ background: "#d4d4d8", color: "#71717a" }}>
-                  {glyph(a)}
-                </span>
+                <AgentIcon id={a.id} name={a.name} size={22} />
                 <span className="nm">{a.name}</span>
               </button>
             ))}
@@ -134,13 +128,6 @@ export function Sidebar({
       </div>
     </aside>
   );
-}
-
-/** 图标里的那个字：优先取名字里的拉丁字母，否则取第一个汉字。 */
-function glyph(a: DetectedAgent): string {
-  const latin = a.name.match(/[A-Za-z]/);
-  if (latin) return latin[0].toUpperCase();
-  return a.name.slice(0, 1);
 }
 
 // ---------------------------------------------------------------- 确认弹窗
@@ -164,40 +151,14 @@ export function Confirm({
   children: ReactNode;
 }) {
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,.34)",
-        display: "grid",
-        placeItems: "center",
-        zIndex: 80,
-        padding: 24,
-      }}
-      onClick={onCancel}
-    >
-      <div
-        style={{
-          background: "#fff",
-          borderRadius: 13,
-          width: 520,
-          maxWidth: "100%",
-          maxHeight: "100%",
-          overflow: "auto",
-          boxShadow: "0 16px 48px rgba(0,0,0,.24)",
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div style={{ padding: "16px 18px 0", fontSize: 15, fontWeight: 600 }}>{title}</div>
-        <div style={{ padding: "10px 18px 4px", fontSize: 12.5, color: "#3f3f46" }}>{children}</div>
-        <div
-          style={{
-            padding: "14px 18px 16px",
-            display: "flex",
-            gap: 8,
-            justifyContent: "flex-end",
-          }}
-        >
+    <div className="modal" onClick={onCancel}>
+      <div className="modalcard" onClick={(e) => e.stopPropagation()}>
+        <div className={`modalhead${danger ? " danger" : ""}`}>
+          <span className="modaldot" />
+          {title}
+        </div>
+        <div className="modalbody">{children}</div>
+        <div className="modalfoot">
           <button className="btn" onClick={onCancel}>
             {t("cancel")}
           </button>
@@ -213,11 +174,7 @@ export function Confirm({
               {extra.text}
             </button>
           )}
-          <button
-            className="btn pri"
-            onClick={onOk}
-            style={danger ? { background: "#b91c1c", borderColor: "#b91c1c" } : undefined}
-          >
+          <button className={`btn pri${danger ? " danger" : ""}`} onClick={onOk}>
             {okText}
           </button>
         </div>
@@ -241,8 +198,13 @@ export function Toast({ items }: { items: ToastItem[] }) {
     <div className="toast">
       {items.map((t) => (
         <div key={t.id} className={`t${t.err ? " err" : ""}`}>
-          {t.msg}
-          {t.detail && <div className="d">{t.detail}</div>}
+          <span className="ti" aria-hidden>
+            {t.err ? "!" : "✓"}
+          </span>
+          <div className="tx">
+            {t.msg}
+            {t.detail && <div className="d">{t.detail}</div>}
+          </div>
         </div>
       ))}
     </div>

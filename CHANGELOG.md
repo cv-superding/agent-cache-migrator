@@ -2,6 +2,19 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 变更（界面）
+
+- **每个 Agent 换成真实图标**：侧栏、标题、快照表、迁移历史里的图标不再是「名字首字母色块」—— 桌面应用用其官方应用图标（WorkBuddy / CodeBuddy / ZCode / 豆包 / 飞书 / Cherry Studio / Chatbox / uTools / 通义灵码 / OpenAI），编程类 Agent 用官方矢量标志（Claude / Cursor / Trae / DeepSeek / Gemini / LM Studio / Ollama / Windsurf / npm）。图标随安装包打包，离线可用；`agents.toml` 里自己加的 Agent 仍走首字母徽章兜底。
+- **整体视觉重做**：中性灰底 + 白色卡片 + 单一绿色强调色；卡片带标题强调条与更克制的阴影，盘符卡片把「可用空间」提到主位并被选中态高亮，进度条 / 步骤条 / 弹窗 / Toast / 提示块统一重做，滚动条收细。所有配色集中在 `src/styles.css` 的 `:root`。
+- 顶部新增 `图标 + 状态 + 占用 / 文件数 / 目录数` 概览条；历史与快照列表补上 Agent 真名和图标。
+- README 的两张界面截图换成新界面。
+
+### 修正
+
+- **卡片在窄窗口下被压扁**（`overflow:hidden` 的卡片放进 flex 列后 `min-height:auto` 失效，内容会互相叠住）—— 给 `.body` 的直接子项显式 `flex: 0 0 auto`。
+
 ## [0.10.1] - 2026-10-18
 
 ### 修正

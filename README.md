@@ -47,7 +47,10 @@
 > 上面两张图来自 `VITE_DEMO_MODE=1` 的演示模式（右下角有角标）——
 > 这样界面能脱离 Rust 壳在浏览器里渲染，改样式不用每次等 `cargo` 编译。
 
-布局稿见 [`mockup.html`](mockup.html)（可直接双击打开）。
+界面样式集中在 [`src/styles.css`](src/styles.css) —— 设计变量（配色 / 圆角 / 阴影）都在 `:root`，
+改皮肤只动那一段；Agent 图标在 [`src/icons.tsx`](src/icons.tsx)，用的是各家**真实的应用图标 / 官方矢量标志**。
+
+> 早期还有一份静态布局稿 `mockup.html`，样式已被正式界面取代，只当历史留存。
 
 ---
 

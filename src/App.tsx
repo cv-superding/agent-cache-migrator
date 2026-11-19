@@ -12,24 +12,8 @@ import type {
 } from "./types";
 import { agentState, human } from "./types";
 import { Card, Confirm, Sidebar, Toast, type ToastItem } from "./components";
+import { AgentIcon } from "./icons";
 import { classHintL, stateLabelL, t, useLang } from "./i18n";
-
-/** 各 Agent 的图标色 —— 纯展示，取不到的走默认灰。 */
-const COLORS: Record<string, string> = {
-  "workbuddy-cn": "#0f766e",
-  "workbuddy-intl": "#0369a1",
-  codex: "#111827",
-  claude: "#b45309",
-  cursor: "#4f46e5",
-  "codebuddy-cn": "#0f766e",
-  zcode: "#7c3aed",
-  deepseek: "#1d4ed8",
-  cherry: "#db2777",
-  trae: "#ea580c",
-  doubao: "#2563eb",
-  utools: "#334155",
-  "npm-cache": "#c2410c",
-};
 
 /** 迁移步骤的展示顺序（与 Rust `Progress.step` 对应）。 */
 const STEP_ORDER = ["copying", "verifying", "snapshotting", "linking", "verifying-link"];
@@ -291,12 +275,13 @@ export default function App() {
   // ---------------------------------------------------------------- 渲染
 
   const detected = agents.filter((a) => a.detected);
+  /** 迁移历史 / 快照里只存了 id，显示时补上真名字。 */
+  const nameOf = (id: string) => agents.find((a) => a.id === id)?.name ?? id;
 
   return (
     <div className="app">
       <Sidebar
         agents={agents}
-        colors={COLORS}
         selected={sel}
         scanning={scanning}
         onPick={(id) => {
@@ -314,22 +299,58 @@ export default function App() {
 
       <div className="main">
         <header className="head">
-          <h1>
-            {cur ? cur.name : t("pickAgent")}
-            {cur && (
-              <>
-                <span className={`badge ${badgeOf(agentState(cur))}`}>{stateLabelL(agentState(cur))}</span>
-                {cur.running.length > 0 && (
-                  <span className="badge b-warn">{t("runningBadge", { list: cur.running.join(", ") })}</span>
-                )}
-              </>
-            )}
-          </h1>
-          <p>
-            {cur
-              ? `${classHintL(cur.class)} · ${cur.kind} · ${t("dirsDetected", { n: cur.paths.filter((p) => p.kind !== "missing").length })}`
-              : t("pickHint")}
-          </p>
+          {cur ? (
+            <div className="hero">
+              <div className="heroicon">
+                <AgentIcon id={cur.id} name={cur.name} size={40} radius={11} />
+              </div>
+              <div className="herotext">
+                <h1>
+                  {cur.name}
+                  <span className={`badge ${badgeOf(agentState(cur))}`}>
+                    {stateLabelL(agentState(cur))}
+                  </span>
+                  {cur.running.length > 0 && (
+                    <span className="badge b-warn">
+                      {t("runningBadge", { list: cur.running.join(", ") })}
+                    </span>
+                  )}
+                </h1>
+                <p>
+                  {classHintL(cur.class)} · {cur.kind} ·{" "}
+                  {t("dirsDetected", {
+                    n: cur.paths.filter((p) => p.kind !== "missing").length,
+                  })}
+                </p>
+              </div>
+              <div className="herostats">
+                <div className="stat">
+                  <span className="k">{t("rowSize")}</span>
+                  <b className="v">
+                    {cur.total.files === 0 && !cur.detected ? "—" : (
+                      <>
+                        {cur.total.capped ? "≥" : ""}
+                        {human(cur.total.bytes)}
+                      </>
+                    )}
+                  </b>
+                </div>
+                <div className="stat">
+                  <span className="k">{t("statFiles")}</span>
+                  <b className="v">{cur.total.files.toLocaleString()}</b>
+                </div>
+                <div className="stat">
+                  <span className="k">{t("statDirs")}</span>
+                  <b className="v">{cur.paths.filter((p) => p.kind !== "missing").length}</b>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <h1>{t("pickAgent")}</h1>
+              <p>{t("pickHint")}</p>
+            </>
+          )}
         </header>
 
         <div className="body">
@@ -460,6 +481,7 @@ export default function App() {
 
           <SnapshotCard
             snaps={snaps}
+            nameOf={nameOf}
             rolling={rolling}
             onRollback={(id) => {
               const a = agents.find((x) => x.id === id);
@@ -499,6 +521,7 @@ export default function App() {
 
           <HistoryCard
             history={history}
+            nameOf={nameOf}
             showAll={allHistory}
             onToggleAll={() => {
               const next = !allHistory;
@@ -686,6 +709,7 @@ function StatusCard({
 /** 迁移历史卡片 —— 每次 run / 环境变量变更都记一条，事后能查账。 */
 function HistoryCard({
   history,
+  nameOf,
   showAll,
   onToggleAll,
 }: {
@@ -706,6 +730,7 @@ function HistoryCard({
     }[];
     path: string;
   } | null;
+  nameOf: (id: string) => string;
   showAll: boolean;
   onToggleAll: () => void;
 }) {
@@ -775,29 +800,35 @@ function HistoryCard({
             {items.map((it, i) => {
               const isEnv = it.type === "env";
               return (
-                <div key={`${it.ts}-${i}`} style={{ marginBottom: 6, fontSize: 12.5 }}>
+                <div key={`${it.ts}-${i}`} className="hrow">
                   {isEnv ? (
                     <>
                       <span className="badge b-gray">{t("badgeEnv")}</span>{" "}
-                      <span style={{ color: "var(--muted)" }}>{it.ts}</span>{" "}
-                      <span className="mono">{it.agent}</span>
-                      <div className="mono" style={{ opacity: 0.8, marginTop: 2 }}>
+                      <span className="ts">{it.ts}</span>
+                      <span className="agentcell">
+                        <AgentIcon id={it.agent} name={nameOf(it.agent)} size={16} />
+                        <b>{nameOf(it.agent)}</b>
+                      </span>
+                      <div className="mono sub" style={{ opacity: 0.8, marginTop: 2 }}>
                         {it.var} —— {it.action}
                       </div>
-                      <div style={{ opacity: 0.8, marginTop: 2 }}>{it.detail}</div>
+                      <div className="sub" style={{ opacity: 0.8, marginTop: 2 }}>{it.detail}</div>
                     </>
                   ) : (
                     <>
                       <span className={it.ok ? "badge b-ok" : "badge b-danger"}>
                         {it.ok ? t("ok") : t("fail")}
                       </span>{" "}
-                      <span style={{ color: "var(--muted)" }}>{it.ts}</span>{" "}
-                      <span className="mono">{it.agent}</span>
-                      <div className="mono" style={{ opacity: 0.8, marginTop: 2 }}>
+                      <span className="ts">{it.ts}</span>
+                      <span className="agentcell">
+                        <AgentIcon id={it.agent} name={nameOf(it.agent)} size={16} />
+                        <b>{nameOf(it.agent)}</b>
+                      </span>
+                      <div className="mono sub" style={{ opacity: 0.8, marginTop: 2 }}>
                         {it.src} → {it.dest}
                       </div>
                       {it.error && (
-                        <div style={{ color: "#b91c1c", marginTop: 2 }}>
+                        <div className="errline" style={{ marginTop: 2 }}>
                           {it.error}
                           {it.rolledBack && t("autoRolledBack")}
                         </div>
@@ -980,13 +1011,14 @@ function DriveBtn({ d, on, onPick }: { d: DriveInfo; on: boolean; onPick: () => 
             {d.isSystem ? "系统盘（不建议）" : d.isDefaultTarget ? "推荐" : ""}
           </span>
         </span>
-        {on && <span className="badge b-info">已选</span>}
+        {on && <span className="badge b-ok">已选</span>}
       </span>
       <span className="bar">
         <i style={{ width: `${d.usedPercent}%` }} />
       </span>
       <span className="m">
-        {d.freeText} 可用 · 共 {human(d.total)}
+        <b>{d.freeText}</b> {t("driveFree")}
+        <span className="cap">{t("driveTotal", { n: human(d.total) })}</span>
       </span>
     </button>
   );
@@ -1120,11 +1152,12 @@ function nameToStep(name: string): string {
 /** 快照卡片。 */
 function SnapshotCard(props: {
   snaps: Snapshot[];
+  nameOf: (id: string) => string;
   rolling: boolean;
   onRollback: (id: string) => void;
   onDelete: (s: Snapshot) => void;
 }) {
-  const { snaps, rolling, onRollback, onDelete } = props;
+  const { snaps, nameOf, rolling, onRollback, onDelete } = props;
   const total = snaps.reduce((n, s) => n + s.measure.bytes, 0);
 
   return (
@@ -1148,7 +1181,12 @@ function SnapshotCard(props: {
             <tbody>
               {snaps.map((s) => (
                 <tr key={s.path}>
-                  <td>{s.agentId}</td>
+                  <td>
+                    <span className="agentcell">
+                      <AgentIcon id={s.agentId} name={nameOf(s.agentId)} size={18} />
+                      <b>{nameOf(s.agentId)}</b>
+                    </span>
+                  </td>
                   <td className="mono">{s.name}</td>
                   <td className="mono">
                     {human(s.measure.bytes)} · {s.measure.files.toLocaleString()}
