@@ -1159,7 +1159,18 @@ pub fn env_relocate_apply(
     let Some(dest_root) = dest_root else {
         return Err("需要指定目标根目录".to_string());
     };
-    let value = dest_root.join(&def.id);
+    // 与迁移落点保持同一规则（单目录 Agent 就是 `dest_root/<id>`）：
+    // 多目录 Agent 若不这样算，变量会指向主目录的落点，而数据其实在另一个子目录。
+    let primary = def
+        .paths
+        .iter()
+        .filter_map(|t| paths::expand(t))
+        .find(|p| p.symlink_metadata().is_ok())
+        .or_else(|| def.paths.iter().filter_map(|t| paths::expand(t)).next());
+    let value = match primary {
+        Some(p) => dest_root.join(dest_dir_name(def, &p)),
+        None => dest_root.join(&def.id),
+    };
     let old = crate::envvar::get(&env.env);
     crate::envvar::set(&env.env, &value.to_string_lossy())?;
     let mut msg = format!("已设置 {} = {}（重启应用后生效）", env.env, value.display());

@@ -650,6 +650,12 @@ fn cmd_env(args: &[String]) -> Result<(), String> {
             return Ok(());
         }
         acm_core::envvar::remove(&env.env)?;
+        migrate::append_env_history(
+            &def.id,
+            &env.env,
+            "unset",
+            &format!("acm env --unset（原值 {}）", old.as_deref().unwrap_or("?")),
+        );
         println!("✅ 已删除 {}（重启应用后恢复默认路径）", env.env);
         return Ok(());
     }
@@ -658,7 +664,17 @@ fn cmd_env(args: &[String]) -> Result<(), String> {
         Some(d) => d,
         None => migrate::default_dest_root().ok_or("没能自动挑出目标盘，请用 --dest 指定")?,
     };
-    let value = dest_root.join(&def.id);
+    // 落点规则与迁移保持一致（多目录 Agent 不能都指到 dest_root/<id>）
+    let primary = def
+        .paths
+        .iter()
+        .filter_map(|t| paths::expand(t))
+        .find(|p| p.symlink_metadata().is_ok())
+        .or_else(|| def.paths.iter().filter_map(|t| paths::expand(t)).next());
+    let value = match primary {
+        Some(p) => dest_root.join(migrate::dest_dir_name(def, &p)),
+        None => dest_root.join(&def.id),
+    };
     let old = acm_core::envvar::get(&env.env);
 
     if !confirm(
@@ -675,6 +691,13 @@ fn cmd_env(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     acm_core::envvar::set(&env.env, &value.to_string_lossy())?;
+    // 与 GUI 共用同一条执行路径：让「改过的用户级环境变量」也进迁移历史
+    migrate::append_env_history(
+        &def.id,
+        &env.env,
+        "set",
+        &format!("acm env 设置 {} = {}", env.env, value.display()),
+    );
     println!(
         "✅ 已设置 {} = {}（重启应用后生效）",
         env.env,
