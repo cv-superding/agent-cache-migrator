@@ -14,6 +14,11 @@
 ### 修正
 
 - **卡片在窄窗口下被压扁**（`overflow:hidden` 的卡片放进 flex 列后 `min-height:auto` 失效，内容会互相叠住）—— 给 `.body` 的直接子项显式 `flex: 0 0 auto`。
+- **盘符卡片在窄窗口下换行掉到第二排**：原来是 `grid auto-fill minmax(186px,1fr)`，宽度不够就把第 4 个盘挤到下一行。改成 `flex` 等分（`flex: 1 1 0; min-width: 0`），盘有几个、窗口多宽都固定一行；卡片内的「可用 / 共 N」在牌面过窄时整块换行，数字不截断。
+
+### 构建
+
+- **MinGW 工具链链接修复**：Rust cdylib 符号过多会让 mingw 的 `ld.exe` 报 `export ordinal too large`，加 `.cargo/config.toml` 对 `x86_64-pc-windows-gnu` 关掉自动导出（`-Wl,--exclude-all-symbols`），MSVC 工具链不受影响。
 
 ## [0.10.1] - 2026-10-18
 

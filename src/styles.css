@@ -473,19 +473,22 @@ code {
 
 /* ---------- 目标盘 ---------- */
 .drives {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(186px, 1fr));
+  /* 永远一行：无论窗口多宽多窄、有几个盘，都等分排开，绝不换行掉到第二排 */
+  display: flex;
+  flex-wrap: nowrap;
   gap: 10px;
 }
 .drv {
+  flex: 1 1 0;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 11px 12px;
+  padding: 9px 10px;
   background: #fcfdfe;
   text-align: left;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 6px;
   transition: border-color 0.14s ease, background 0.14s ease, box-shadow 0.14s ease,
     transform 0.14s ease;
 }
@@ -511,11 +514,19 @@ code {
   font-weight: 600;
   font-size: 12.5px;
   gap: 6px;
+  min-width: 0;
+}
+.drv .t > span:first-child {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .drv .t .tag {
   font-weight: 400;
   color: var(--muted);
   font-size: 11px;
+  white-space: nowrap;
 }
 .drv.on .t .tag {
   color: var(--accent-ink);
@@ -539,19 +550,22 @@ code {
   background: linear-gradient(90deg, #f0706a, #dc2626);
 }
 .drv .m {
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--muted);
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* 牌面窄的时候，「共 N」整块换到第二行，不截断数字 */
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 5px;
+  justify-content: space-between;
+  gap: 2px 4px;
+}
+.drv .m .free {
+  white-space: nowrap;
 }
 .drv .m b {
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 600;
   color: #33404f;
 }
@@ -561,6 +575,7 @@ code {
 .drv .m .cap {
   color: var(--faint);
   margin-left: auto;
+  white-space: nowrap;
 }
 
 /* ---------- 输入 / 按钮 ---------- */

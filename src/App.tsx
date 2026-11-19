@@ -1017,7 +1017,9 @@ function DriveBtn({ d, on, onPick }: { d: DriveInfo; on: boolean; onPick: () => 
         <i style={{ width: `${d.usedPercent}%` }} />
       </span>
       <span className="m">
-        <b>{d.freeText}</b> {t("driveFree")}
+        <span className="free">
+          <b>{d.freeText}</b> {t("driveFree")}
+        </span>
         <span className="cap">{t("driveTotal", { n: human(d.total) })}</span>
       </span>
     </button>
