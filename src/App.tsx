@@ -896,13 +896,18 @@ function HistoryCard({
             alignItems: "center",
           }}
         >
-          <input
-            className="mono"
-            placeholder={t("searchPh")}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            style={{ flex: "1 1 160px", minWidth: 140, padding: "4px 8px" }}
-          />
+          <div className="searchwrap">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="7" cy="7" r="4.6" stroke="currentColor" strokeWidth="1.4" />
+              <path d="M10.4 10.4 13.5 13.5" stroke="currentColor" strokeWidth="1.4" />
+            </svg>
+            <input
+              type="text"
+              placeholder={t("searchPh")}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
           {filterBtn("all", t("filterAll"))}
           {filterBtn("migrate", t("filterMigrate"))}
           {filterBtn("env", t("filterEnv"))}
