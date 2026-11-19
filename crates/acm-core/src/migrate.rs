@@ -241,20 +241,30 @@ fn safe_segment(s: &str) -> String {
 ///
 /// `dest_root` 是「目标根目录」（会拼上 agent id 作为子目录），不是最终目录本身。
 pub fn plan(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<Plan, String> {
-    if !src.exists() {
-        return Err(format!("源目录不存在：{}", src.display()));
-    }
+    // 🔴 先判联接再判存在：**断链**的 `exists()` 是 false，先判存在会把它
+    //    说成「源目录不存在」，把用户引向「重新迁移」而不是「修复」。
     if fsutil::is_link(src) {
-        // 已经迁过：说清数据在哪，而不是干巴巴一句「不需要再迁」
         let target = fsutil::link_target(src)
             .map(|t| t.to_string_lossy().to_string())
             .unwrap_or_else(|| "?".into());
+        if !src.exists() {
+            return Err(format!(
+                "{} 是**断掉的联接**（原目标 {} 现在不存在）—— 数据大概率还在目标盘，\
+                 请用「修复」（acm repair）重建链接，别重新迁移",
+                src.display(),
+                target
+            ));
+        }
+        // 已经迁过：说清数据在哪，而不是干巴巴一句「不需要再迁」
         return Err(format!(
             "{} 已经是联接（数据在 {}），不需要再迁。\
              想搬回来用「回滚」，想换个盘先回滚再迁移",
             src.display(),
             target
         ));
+    }
+    if !src.exists() {
+        return Err(format!("源目录不存在：{}", src.display()));
     }
     // 🔴 落点必须和 `run_inner`/`repair` 用同一个命名规则：多目录 Agent 的第二个目录
     // 若也算成 `dest_root/<id>`，就会撞进主目录的落点（两套数据混成一坨）。

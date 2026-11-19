@@ -13,6 +13,7 @@
 - **`acm migrate --json` 每份报告输出两遍**：`if json { reports.push(rep.clone()) }` 之后又无条件 `reports.push(rep)`。
 - **`acm rollback` / `acm repair` 在真正需要它的时候罢工**：`resolve_target` 用 `p.exists()` 过滤，而**断链**的 `exists()` 是 false、整个目录没了也是 false —— 于是报「数据目录都不存在」，和界面那条放宽过的路不一致。现在按「有快照的目录 → 链接（含断链）→ 目录缺失但父目录在」三级解析。
 - **`\\?\UNC\` 网络路径被剥坏**：`fsutil::normalize` 把 `\\?\UNC\server\share` 剥成 `UNC\server\share`（相对路径），网络盘上的联接会被永久误判成断链。现在还原成 `\\server\share`。
+- **断链时 `plan` 把人指错方向**：`plan` 先判 `exists()`（断链恰好是 false）→ 报「源目录不存在」，用户会以为数据没了、跑去重新迁移。改成先判联接：正常联接依旧报「已经迁移」，断链则明确提示「数据大概率还在目标盘，请用修复（acm repair）」。
 - **文档陈旧**：`migrate.rs` 顶部还在引用已删除的 `is_under_root`，已改为描述现在的 `pending_count`（大小 + 时间逐文件比对）。
 
 ### 修复（迁移内核 · 第二轮）

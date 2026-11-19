@@ -152,7 +152,8 @@ export default function App() {
   }
 
   /** 清空迁移历史（只删日志文件，动作/数据都不动）。 */
-  async function doClearHistory() {    try {
+  async function doClearHistory() {
+    try {
       const n = await api.clearHistory();
       toast(t("toastHistoryCleared"), t("toastHistoryClearedSub", { n }));
       await refreshHistory(allHistory);
