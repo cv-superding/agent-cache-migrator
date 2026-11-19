@@ -253,7 +253,9 @@ pub fn plan(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<Plan, String
             target
         ));
     }
-    let dest = dest_root.join(&def.id);
+    // 🔴 落点必须和 `run_inner`/`repair` 用同一个命名规则：多目录 Agent 的第二个目录
+    // 若也算成 `dest_root/<id>`，就会撞进主目录的落点（两套数据混成一坨）。
+    let dest = dest_root.join(dest_dir_name(def, src));
 
     // 目标不能落在源里面，也不能就是源 —— 否则会自我递归复制。
     if path_starts_with(&dest, src) || dest == src {
@@ -584,6 +586,21 @@ pub const CANCELLED_MSG: &str = "迁移已取消（目标盘已复制的部分�
 
 fn is_cancelled() -> bool {
     CANCELLED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// 🔴 取消开关是**进程级全局**的，而 `cargo test` 是并行跑用例的：
+/// 取消用例置位的那一瞬间，别的用例正好在复制 → 被误判成「迁移已取消」。
+/// 曾经真的随机挂过（单独跑全通、跑全量挂一条）。这里用一把全局锁，
+/// 让「会置位取消」和「会检查取消」的用例互斥。
+#[cfg(test)]
+static CANCEL_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 见 [`CANCEL_GATE`]：拿到它才能碰取消开关或跑复制。
+#[cfg(test)]
+fn cancel_gate() -> std::sync::MutexGuard<'static, ()> {
+    CANCEL_GATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// 带 options 的执行入口（`run` 的全参数版）。
@@ -2037,6 +2054,7 @@ mod imp {
         /// unix 那边的同款测试早已存在，这里补齐对等性。
         #[test]
         fn copy_verify_link_rollback_roundtrip() {
+            let _gate = super::super::cancel_gate();
             let base = scratch("rt");
             let src = base.join("src");
             let dst = base.join("dst");
@@ -2364,6 +2382,7 @@ mod imp {
         /// 这个测试在 Linux/macOS 上真跑，所以 unix 这条路是**被验证过的**，不是纸面实现。
         #[test]
         fn copy_verify_link_rollback_roundtrip() {
+            let _gate = super::super::cancel_gate();
             let base = scratch("rt");
             let src = base.join("src");
             let dst = base.join("dst");
@@ -2983,6 +3002,7 @@ processes = []
     /// macOS 的 imp 是占位实现，跳过取消断言。
     #[test]
     fn cancel_flag_and_hash_verification() {
+        let _gate = super::cancel_gate();
         // 用项目 target/ 而不是 %TEMP% —— 某些沙盒环境会干扰 %TEMP% 里的新建目录
         // （create 成功后 write 却 NotFound），而 target/ 是 cargo 自己频繁写的目录。
         let temp = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -3121,6 +3141,19 @@ env = "AC_TEST_ROLLBACK_VAR"
         assert_ne!(second, "doubao", "第二个目录必须换个名字，不能覆盖主目录的落点");
         assert!(second.starts_with("doubao-"), "实际是 {second}");
         assert!(second.contains("Doubao"), "应当能认出是哪个目录：{second}");
+
+        // plan 的落点必须跟实际复制一致 —— 之前 plan 只用 `def.id`，
+        // 界面上显示「最终落点」是同一个地方，复制却会撞车。
+        let dest_root = base.join("AgentCache");
+        std::fs::create_dir_all(&dest_root).unwrap();
+        let p_main = plan(&def, &local, &dest_root).unwrap();
+        let p_second = plan(&def, &roaming, &dest_root).unwrap();
+        assert_ne!(
+            p_main.dest, p_second.dest,
+            "plan 给两个目录算出了同一个落点：{}",
+            p_main.dest
+        );
+        assert!(p_second.dest.ends_with(&second), "实际是 {}", p_second.dest);
 
         let _ = std::fs::remove_dir_all(&base);
     }
