@@ -42,8 +42,17 @@ pub fn link_target(p: &Path) -> Option<PathBuf> {
 
 /// 去掉 Windows `\\?\` 长路径前缀 —— 联接的目标经常带这个前缀，
 /// 直接拿去 `exists()` 会失败，也会让界面显示得很丑。
+///
+/// ⚠ `\\?\UNC\server\share` 是另一回事：剥掉前缀后必须还原成
+/// `\\server\share`（网络路径），**不能**剩下 `UNC\server\share`
+/// —— 那是个相对路径，`exists()` 永远 false，会把完好的联接误判成断链。
 fn normalize(p: PathBuf) -> PathBuf {
-    let s = p.to_string_lossy();
+    let s = p.to_string_lossy().to_string();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        if !rest.is_empty() {
+            return PathBuf::from(format!(r"\\{rest}"));
+        }
+    }
     match s.strip_prefix(r"\\?\") {
         Some(rest) if rest.len() > 2 => PathBuf::from(rest),
         _ => p,

@@ -77,6 +77,16 @@ pub fn run_checks(defs: &[AgentDef]) -> Vec<Finding> {
 
     // ① 每 Agent 的数据目录状态 + 运行中进程
     for def in defs {
+        // 「正在运行」是**进程级**事实，一个 Agent 只该报一次 ——
+        // 以前写在路径循环里，豆包这种双目录 Agent 会把同一条警告报两遍。
+        let running = crate::procs::matching_in(&procs, &def.processes);
+        if !running.is_empty() {
+            out.push(warn(
+                &def.id,
+                format!("正在运行：{}", running.join(", ")),
+                Some("迁移前请退出该应用".to_string()),
+            ));
+        }
         for src in def.paths.iter().filter_map(|t| crate::paths::expand(t)) {
             match fsutil::classify(&src) {
                 fsutil::EntryKind::Link {
@@ -133,16 +143,8 @@ pub fn run_checks(defs: &[AgentDef]) -> Vec<Finding> {
                     ));
                 }
             }
-
-            let running = crate::procs::matching_in(&procs, &def.processes);
-            if !running.is_empty() {
-                out.push(warn(
-                    &def.id,
-                    format!("正在运行：{}", running.join(", ")),
-                    Some("迁移前请退出该应用".to_string()),
-                ));
-            }
         }
+        // 注：「正在运行」已在进入路径循环前报过一次，这里不再重复。
     }
 
     // ② 快照状态
@@ -207,6 +209,14 @@ pub fn run_checks(defs: &[AgentDef]) -> Vec<Finding> {
             }
         }
     }
+    // 🔴 判定「这快照是不是我们的人留下的」要用**真实声明路径**比，
+    //    不能只拿名字反解 id：`%APPDATA%\Trae CN`、`%LOCALAPPDATA%\WorkBuddy`
+    //    这类目录名不带点，反解会得到 `Trae CN` —— `trim_start_matches('.')`
+    //    救不了它，于是自家快照被误报成「孤儿」。
+    let known_origins: Vec<PathBuf> = defs
+        .iter()
+        .flat_map(|d| d.paths.iter().filter_map(|t| crate::paths::expand(t)))
+        .collect();
     for parent in &parents {
         let Ok(rd) = std::fs::read_dir(parent) else {
             continue;
@@ -216,19 +226,29 @@ pub fn run_checks(defs: &[AgentDef]) -> Vec<Finding> {
             let Some(idx) = name.find(SNAPSHOT_MARK) else {
                 continue;
             };
-            // 按命名约定反解 agent id：`.codex.moved-…` → `.codex` → 与注册表比对
+            // 按命名约定反解原位：`<原名>.moved-<时间戳>` → `<原名>`
             let dir_prefix = &name[..idx];
-            let agent_id = dir_prefix.trim_start_matches('.');
-            if !known.contains(agent_id) {
-                out.push(warn(
-                    "snapshot",
-                    format!(
-                        "孤儿快照：{}（注册表里没有 id = {agent_id} 的 Agent —— 可能是自定义 Agent 已从 agents.toml 移除）",
-                        entry.path().display()
-                    ),
-                    Some("确认无用后在界面「快照清理」删除（或手工改回原名恢复数据）".to_string()),
-                ));
+            let orig = parent.join(dir_prefix);
+            let is_declared = known_origins
+                .iter()
+                .any(|k| crate::migrate::same_path(k, &orig));
+            if is_declared {
+                continue;
             }
+            // 兼容旧约定：按 id 反解（`.codex` → `codex`）
+            let agent_id = dir_prefix.trim_start_matches('.');
+            if known.contains(agent_id) {
+                continue;
+            }
+            out.push(warn(
+                "snapshot",
+                format!(
+                    "孤儿快照：{}（注册表里没有对应原位 {} 的 Agent —— 可能是自定义 Agent 已从 agents.toml 移除）",
+                    entry.path().display(),
+                    orig.display()
+                ),
+                Some("确认无用后在界面「快照清理」删除（或手工改回原名恢复数据）".to_string()),
+            ));
         }
     }
 
@@ -281,6 +301,29 @@ mod tests {
         std::fs::create_dir_all(&plain).unwrap();
         assert!(snapshot_original_path(&plain).is_none());
 
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 数据目录名不带点的 Agent（`%APPDATA%\Trae CN`、`WorkBuddy`）迁出的快照
+    /// **不是孤儿** —— 这里钉住「按真实声明路径比对」这条修正。
+    #[test]
+    fn snapshot_of_non_dotted_dir_is_not_orphan() {
+        let base = std::env::temp_dir().join(format!("acm-doctor-space-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("Trae CN.moved-20261017-000000")).unwrap();
+
+        let cfg = base.join("agents.toml");
+        let cfg_text = format!(
+            "schema_version = 1\n[[agent]]\nid = \"traecn\"\nname = \"Trae CN\"\npaths = [\"{}/Trae CN\"]\nprocesses = []\n",
+            base.to_string_lossy().replace('\\', "/")
+        );
+        std::fs::write(&cfg, cfg_text).unwrap();
+        let defs = crate::agents::load(Some(&cfg)).unwrap();
+        let findings = run_checks(&defs);
+        assert!(
+            !findings.iter().any(|f| f.message.contains("孤儿快照")),
+            "Trae CN 的快照不应被误报成孤儿，实际：{findings:?}"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 

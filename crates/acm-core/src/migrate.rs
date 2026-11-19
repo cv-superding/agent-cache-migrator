@@ -6,7 +6,8 @@
 //!
 //! 1. 🔴 **`robocopy /L` 的清单里会混进「目标盘多出来的文件」**（它打的是目标路径）。
 //!    拿「非空行数」当待复制数，那些**本来就在目标里、永远搬不过去**的行会让收敛判定
-//!    永远不成立 —— 迁移永远报失败。所以必须**只数源树里的路径**（见 [`is_under_root`]）。
+//!    永远不成立 —— 迁移永远报失败。所以现在**不再解析 `/L` 文本**，而是走一遍源树
+//!    逐文件比对（`pending_count`，大小 + 修改时间）。
 //! 2. 🔴 **应用还在跑就永远不收敛**：它会持续改写缓存，前面的复制刚完、后面又变了。
 //!    所以迁移前必须确认没有持有者（`locks` 模块做精确判断）。
 //! 3. 🔴 **改名会把「断链的联接」一起搬走**：源目录里若有断链的运行时联接，
@@ -196,8 +197,10 @@ pub fn volume_fs(_root: &Path) -> Option<String> {
 /// 两个名字都叫 `Doubao`，只能靠父目录区分 → `doubao-Local-Doubao`。
 pub fn dest_dir_name(def: &AgentDef, src: &Path) -> String {
     let declared: Vec<PathBuf> = def.paths.iter().filter_map(|t| paths::expand(t)).collect();
-    // src 不在声明里（CLI/测试直接给路径）→ 用短名字，别给它编一个后缀
-    let Some(pos) = declared.iter().position(|p| p == src) else {
+    // src 不在声明里（CLI/测试直接给路径）→ 用短名字，别给它编一个后缀。
+    // ⚠ 用「同路径」判定而不是 `PathBuf` 直接相等：大小写、`/` 与 `\`、
+    //   `\\?\` 前缀都会让相等比较落空，一落空就退回 `def.id` —— 多目录撞车回归。
+    let Some(pos) = declared.iter().position(|p| same_path(p, src)) else {
         return def.id.clone();
     };
     // 「主目录」= 声明里第一个真实存在的；都不存在时按声明顺序的第一个
@@ -390,7 +393,7 @@ pub fn plan(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<Plan, String
         .paths
         .iter()
         .filter_map(|tpl| paths::expand(tpl))
-        .filter(|p| p != src && p.exists() && !fsutil::is_link(p))
+        .filter(|p| !same_path(p, src) && p.exists() && !fsutil::is_link(p))
         .count();
     if other_paths > 0 {
         warnings.push(format!(
@@ -1059,9 +1062,13 @@ fn hash_compare_tree(
 
 /// 把「迁移后新增/变更」的文件从 `target` 复制到 `rescue_dir`。
 ///
-/// 判据（相对 `target` 的路径）：快照里**不存在**，或**大小不同**。
-/// 大小相同视为未改 —— 与迁移校验的收敛判据一致（应用已退出的前提下成立）。
-/// 返回 (文件数, 字节数)。**不改 target 本身** —— 只复制。
+/// 判据（相对 `target` 的路径）：快照里**不存在**，或**大小不同**，或
+/// **修改时间差超过容差**。⚠ 只看大小会漏掉「改了内容但长度没变」的编辑
+/// （配置文件、JSON、SQLite 页改写都是这种），而文档承诺的是「回滚零丢失」——
+/// 所以时间也要参与判定；漏判的代价是用户刚改的设置被回滚吞掉。
+///
+/// 误判方向是安全的：把「其实没改」的文件多复制一份进抢救目录，只是多占点
+/// 空间，不会破坏任何东西。返回 (文件数, 字节数)。**不改 target 本身** —— 只复制。
 fn rescue_changed_files(
     target: &Path,
     snapshot: &Path,
@@ -1087,7 +1094,8 @@ fn rescue_changed_files(
             };
             let snap_file = snapshot.join(rel);
             let changed = match std::fs::symlink_metadata(&snap_file) {
-                Ok(s) => s.len() != md.len(),
+                Ok(s) if s.is_file() => s.len() != md.len() || !mtime_close(&s, &md),
+                Ok(_) => true,  // 快照里同名的是个目录/链接 —— 形状变了，按变更处理
                 Err(_) => true, // 快照里没有 = 新增
             };
             if !changed {
@@ -1214,7 +1222,7 @@ pub fn repair(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<RepairRepo
             target,
         } => {
             // 🔴 必须精确指向 dest：指向 dest 的子路径也算「不在预期位置」
-            let points_right = target.as_ref().map(|t| t == &dest).unwrap_or(false);
+            let points_right = target.as_ref().map(|t| same_path(t, &dest)).unwrap_or(false);
             if points_right {
                 Ok(mk(
                     "noop",
@@ -1292,7 +1300,7 @@ pub fn list_snapshots(defs: &[AgentDef]) -> Vec<Snapshot> {
 
 /// 删掉一个快照。
 ///
-/// - `permanent = true` —— 永久删除（解 ACL → 清属性 → 递归删），**不可恢复**。
+/// - `permanent = true` —— 永久删除（先摘掉树内联接 → 直接删 → 失败才解 ACL / 清属性），**不可恢复**。
 /// - `permanent = false` —— **移入回收站**（`trash` crate：Windows 走
 ///   COM `IFileOperation`，macOS 走 NSWorkspace，Linux 走 freedesktop trash，
 ///   全部可从系统回收站还原）。
@@ -1361,7 +1369,7 @@ fn validate_snapshot_path(snapshot: &Path, defs: &[AgentDef]) -> Result<(), Stri
                 let expected = format!("{}{}", n.to_string_lossy(), SNAPSHOT_MARK);
                 name.starts_with(&expected)
             });
-            let parent_ok = p.parent().is_some_and(|pp| pp == parent);
+            let parent_ok = p.parent().is_some_and(|pp| same_path(pp, parent));
             if prefix_ok && parent_ok {
                 return Ok(());
             }
@@ -1394,18 +1402,103 @@ fn root_of_volume(_p: &Path) -> Option<String> {
 }
 
 /// `p` 是否在 `root` 里面（含相等）。
-fn path_starts_with(p: &Path, root: &Path) -> bool {    let a = norm_for_compare(p);
+fn path_starts_with(p: &Path, root: &Path) -> bool {
+    let a = norm_for_compare(p);
     let b = norm_for_compare(root);
     a == b || a.starts_with(&format!("{b}\\"))
 }
 
-fn norm_for_compare(p: &Path) -> String {
+/// 规范化「路径」以便比较：去长路径前缀、分隔符统一成 `\`、去尾分隔符、小写。
+pub(crate) fn norm_for_compare(p: &Path) -> String {
     p.to_string_lossy()
         .trim_start_matches(r"\\?\")
         .replace('/', "\\")
         .trim_end_matches('\\')
         .to_ascii_lowercase()
 }
+
+/// 两个路径是不是同一个位置（大小写 / 分隔符 / 长路径前缀都不敏感）。
+pub(crate) fn same_path(a: &Path, b: &Path) -> bool {
+    norm_for_compare(a) == norm_for_compare(b)
+}
+
+/// 两个文件的修改时间是否「视为相同」（3 秒容差，覆盖 FAT/exFAT 的 2 秒粒度）。
+///
+/// 复制收敛判定（`pending_count`）和回滚前的「抢救变更」判定共用这一条 ——
+/// 两处必须用同一个尺度，否则会出现「迁移说已同步、回滚又说有变更」。
+fn mtime_close(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    let (Ok(x), Ok(y)) = (a.modified(), b.modified()) else {
+        // 有些文件系统读不到时间 —— 大小已经相等了，就按「没变」处理，
+        // 免得出现「怎么都搬不完」/「永远有变更」的死循环。
+        return true;
+    };
+    let diff = x.duration_since(y).or_else(|_| y.duration_since(x)).ok();
+    diff.map(|d| d.as_secs() <= 3).unwrap_or(true)
+}
+
+/// 🔴 删除类操作的路径闸门：**只允许删「某个真实父目录下的具名子项」**。
+///
+/// 这一层是纵深防御 —— 调用方（`cleanup`）已经校验过「是不是我们生成的快照」，
+/// 但 `remove_dir_forced` 是 `pub` 的，一旦将来有别的调用点传进用户输入，
+/// 一个空串或 `C:\` 就能把整盘送进删除流程。
+fn ensure_deletable_root(root: &Path) -> Result<(), String> {
+    let text = root.to_string_lossy().trim().to_string();
+    if text.is_empty() {
+        return Err("拒绝删除：路径为空".to_string());
+    }
+    if !root.is_absolute() {
+        return Err(format!("拒绝删除：不是绝对路径（{text}）"));
+    }
+    let norm = norm_for_compare(root);
+    // 盘符根（`c:`）与 unix 根（`/`）永远不是「快照」
+    if norm.is_empty() || norm == "/" || norm == "\\" || (norm.len() == 2 && norm.ends_with(':')) {
+        return Err(format!("拒绝删除：{text} 是卷根，不是可清理的快照"));
+    }
+    // 必须有「父目录 + 名字」两段（`C:\x` 这种才合格）
+    if root.file_name().is_none() {
+        return Err(format!("拒绝删除：{text} 没有文件名，不是可清理的快照"));
+    }
+    Ok(())
+}
+
+/// 把一棵树里的重解析点（目录联接 / 符号链接）**就地摘掉**，绝不跟进去。
+///
+/// 🔴 为什么不删不摘直接 `icacls /reset /T`：实测确认 `icacls /T` 与
+/// `attrib /S /D` **都会穿进联接**，把目标盘上的 ACL / 只读属性一起改掉 ——
+/// 而快照里很可能还留着 WorkBuddy 那种指向**共享运行时**的联接
+/// （`binaries/python/versions/*`），一删旧快照就会把应用正在用的运行时弄坏。
+/// 删树本来就要删掉这些链接，所以先摘掉它们既安全又等价。
+fn strip_reparse_points(root: &Path) -> Result<(), String> {
+    let mut stack = vec![root.to_path_buf()];
+    let mut removed = 0usize;
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if fsutil::is_link(&p) {
+                // 目录联接用 remove_dir（只摘链接本身），文件符号链接用 remove_file
+                let r = match std::fs::remove_dir(&p) {
+                    Ok(()) => Ok(()),
+                    Err(_) => std::fs::remove_file(&p),
+                };
+                r.map_err(|e| format!("摘除 {} 里的联接 {} 失败：{e}", dir.display(), p.display()))?;
+                removed += 1;
+                continue;
+            }
+            if p.is_dir() {
+                stack.push(p);
+            }
+        }
+    }
+    if removed > 0 {
+        // 提醒排障的人：这棵快照里有链接被摘掉了（链接指向的数据不在快照里）
+        eprintln!("提示：删除前摘掉了 {removed} 个联接/符号链接（它们指向的数据不受影响）");
+    }
+    Ok(())
+}
+
 
 /// 把持有者按进程名去重，得到「要退出的应用」清单。
 fn dedup_labels(holders: &[crate::locks::Holder]) -> Vec<String> {
@@ -1425,7 +1518,8 @@ fn dedup_labels(holders: &[crate::locks::Holder]) -> Vec<String> {
 }
 
 /// 找出 `<parent>/<name>.moved-<ts>` 形式的快照，返回 (路径, 时间戳文本)。
-fn snapshots_of(target: &Path) -> Vec<(PathBuf, String)> {
+/// 某个原路径旁边有哪些快照（**新 → 旧**，第一个就是最近一次迁移留下的）。
+pub fn snapshots_of(target: &Path) -> Vec<(PathBuf, String)> {
     let (Some(parent), Some(name)) = (target.parent(), target.file_name()) else {
         return Vec::new();
     };
@@ -1645,7 +1739,7 @@ mod imp {
                     continue;
                 }
                 let same = match std::fs::metadata(dst.join(rel)) {
-                    Ok(dm) => dm.len() == md.len() && mtime_close(&dm, &md),
+                    Ok(dm) => dm.len() == md.len() && super::mtime_close(&dm, &md),
                     Err(_) => false,
                 };
                 if !same {
@@ -1664,17 +1758,6 @@ mod imp {
                 n == "$recycle.bin" || n == "system volume information"
             })
             .unwrap_or(false)
-    }
-
-    /// 两个文件的修改时间是否「视为相同」（3 秒容差，覆盖 FAT 的 2 秒粒度）。
-    fn mtime_close(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
-        let (Ok(x), Ok(y)) = (a.modified(), b.modified()) else {
-            // 有些文件系统读不到时间 —— 大小已经相等了，就按已复制处理，
-            // 免得出现「怎么都搬不完」的死循环。
-            return true;
-        };
-        let diff = x.duration_since(y).or_else(|_| y.duration_since(x)).ok();
-        diff.map(|d| d.as_secs() <= 3).unwrap_or(true)
     }
 
     /// 原目录改名成快照。改名失败时会重试一次（杀软/索引服务常会短暂占用）。
@@ -1914,9 +1997,10 @@ mod imp {
         trash::delete(root).map_err(|e| format!("移入回收站失败：{e}"))
     }
 
-    /// 永久删除一个目录树（先解 ACL 再删，跳过联接本体）。
+    /// 永久删除一个目录树（跳过联接本体）。
     pub fn remove_dir_forced(root: &Path) -> Result<u64, String> {
-        if !root.exists() {
+        super::ensure_deletable_root(root)?;
+        if !root.exists() && !fsutil::is_link(root) {
             return Ok(0);
         }
         // 🔴 root 自己就是联接时**只摘链接**，绝不递归进去：
@@ -1930,15 +2014,22 @@ mod imp {
         // 所以联接指向的别处数据不会被算进来（那些也不该被删）。
         let freed = fsutil::measure(root, 2_000_000, std::time::Duration::from_secs(60)).bytes;
 
+        // 🔴 树**内部**的联接同样危险：实测 `icacls /reset /T` 与 `attrib /S /D`
+        //   都会穿进联接改掉目标盘的 ACL / 属性。先摘掉它们（删树本来也要删），
+        //   之后的 ACL/属性操作才只作用于这棵树自己。
+        super::strip_reparse_points(root)?;
+
+        // 先直接删 —— 大多数快照不需要碰 ACL，这样最快也最不扰民。
+        if std::fs::remove_dir_all(root).is_ok() {
+            return Ok(freed);
+        }
+
         // 🔴 应用会给「当天日志目录」加 `(OI)(CI)(DENY)(DE,DC)`，里面文件继承「拒绝删除」
-        // → 直接删会 `os error 5`。先对整棵子树 reset 掉显式 ACE，还原成继承。
+        // → 直接删会 `os error 5`。对整棵子树 reset 掉显式 ACE，还原成继承。
         let _ = run(
             "icacls",
             &[&root.to_string_lossy(), "/reset", "/T", "/C", "/Q"],
         );
-
-        // 🔴 `remove_dir_all` 在 Windows 上会识别重解析点、**只删链接本身不递归进去**
-        // （标准库自带保护）。这正是我们要的：绝不把目标盘的真实数据删掉。
         if let Err(e1) = std::fs::remove_dir_all(root) {
             // 只读/隐藏属性是第二常见的阻碍，去掉再试一次。
             let star = format!("{}\\*", root.to_string_lossy());
@@ -2166,6 +2257,30 @@ mod imp {
 
             let _ = std::fs::remove_dir_all(&base);
         }
+
+        /// 🔴 回归：`icacls /reset /T` 会**穿进联接**改掉目标盘的 ACL（实测确认）。
+        /// 所以删树前的第一步必须是「把树里的联接摘掉」——这个测试直接钉住
+        /// `strip_reparse_points` 的行为：只摘链接、不碰目标数据。
+        #[test]
+        fn strip_reparse_points_only_removes_links() {
+            let base = scratch("strip-link");
+            let tree = base.join("tree");
+            std::fs::create_dir_all(tree.join("深/一层")).unwrap();
+            std::fs::write(tree.join("深/一层/own.txt"), b"own").unwrap();
+            let outside = base.join("outside");
+            std::fs::create_dir_all(&outside).unwrap();
+            std::fs::write(outside.join("shared.txt"), b"shared").unwrap();
+            make_junction(&tree.join("深/link"), &outside).unwrap();
+            make_junction(&tree.join("top"), &outside).unwrap();
+
+            super::super::strip_reparse_points(&tree).unwrap();
+            assert!(!tree.join("深/link").exists(), "嵌套联接应被摘掉");
+            assert!(!tree.join("top").exists(), "顶层联接应被摘掉（删树本来也会删）");
+            assert!(outside.join("shared.txt").exists(), "联接目标的数据必须原样");
+            assert!(tree.join("深/一层/own.txt").exists(), "真实文件不该被误删");
+
+            let _ = std::fs::remove_dir_all(&base);
+        }
     }
 }
 
@@ -2351,10 +2466,17 @@ mod imp {
 
     /// 永久删除一个目录树（先量体积再删）。unix 上不需要解 ACL。
     pub fn remove_dir_forced(root: &Path) -> Result<u64, String> {
-        if !root.exists() {
+        super::ensure_deletable_root(root)?;
+        if !root.exists() && !fsutil::is_link(root) {
             return Ok(0);
         }
+        if fsutil::is_link(root) {
+            return remove_junction(root).map(|()| 0);
+        }
         let freed = fsutil::measure(root, 2_000_000, Duration::from_secs(60)).bytes;
+        // 树内的符号链接也先摘掉：`remove_dir_all` 本身只会 unlink 链接，
+        // 但统一走一遍，行为与 Windows 对齐、也提示用户链接没被跟进去。
+        super::strip_reparse_points(root)?;
         // `remove_dir_all` 遇到符号链接只会 unlink 链接本身（标准库自带保护），
         // 所以不会误删目标盘的数据。
         std::fs::remove_dir_all(root).map_err(|e| format!("删除失败：{e}"))?;
@@ -2757,6 +2879,32 @@ fn norm_root(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 删除闸门：空路径、盘符根、相对路径一律拒绝 —— 只有「具名子项」才放行。
+    #[test]
+    fn deletable_root_guard_rejects_dangerous_paths() {
+        assert!(ensure_deletable_root(Path::new("")).is_err(), "空路径必须拒绝");
+        assert!(ensure_deletable_root(Path::new(r"..\x")).is_err(), "相对路径必须拒绝");
+        #[cfg(windows)]
+        {
+            assert!(ensure_deletable_root(Path::new(r"C:\")).is_err(), "盘符根必须拒绝");
+            assert!(ensure_deletable_root(Path::new(r"C:")).is_err(), "光杆盘符必须拒绝");
+            assert!(ensure_deletable_root(Path::new(r"C:\Users\x\.codex.moved-1")).is_ok());
+        }
+        #[cfg(unix)]
+        {
+            assert!(ensure_deletable_root(Path::new("/")).is_err(), "根目录必须拒绝");
+            assert!(ensure_deletable_root(Path::new("/home/u/.codex.moved-1")).is_ok());
+        }
+    }
+
+    /// 路径比较要吃掉大小写 / 分隔符 / 长路径前缀差异（多目录落点判定靠它）。
+    #[test]
+    fn same_path_ignores_case_and_separators() {
+        assert!(same_path(Path::new(r"D:\A\b"), Path::new(r"d:/a/B")));
+        assert!(same_path(Path::new(r"\\?\D:\a\b"), Path::new(r"D:\a\b")));
+        assert!(!same_path(Path::new(r"D:\a\b"), Path::new(r"D:\a\bc")));
+    }
 
     #[test]
     fn path_inside_detects_recursion() {

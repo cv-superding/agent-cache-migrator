@@ -278,7 +278,7 @@ fn cmd_plan(args: &[String]) -> Result<(), String> {
         let Some(src) = paths::expand(tpl) else {
             continue;
         };
-        if !src.exists() {
+        if !src.exists() && !fsutil::is_link(&src) {
             println!("{tpl} → {}（不存在，跳过）\n", src.display());
             continue;
         }
@@ -354,6 +354,11 @@ fn print_plan(p: &migrate::Plan) {
 // ---------------------------------------------------------------- migrate / rollback
 
 /// 解析公共参数并解析出 (定义, 源目录)。
+///
+/// 🔴 不能只用 `exists()`：**断链**（`exists()` == false）恰恰是 `rollback` /
+/// `repair` 最需要处理的状态 —— 用 exists 过滤会让 CLI 在真正出毛病的时候
+/// 报「数据目录都不存在」，而界面那条路（`lib.rs::repair`）是放宽过的。
+/// 优先级：有快照的 → 链接（含断链）→ 目录缺失但父目录还在。
 fn resolve_target(args: &[String], usage: &str) -> Result<(acm_core::AgentDef, PathBuf), String> {
     let id = positional(args, usage)?;
     let cfg = flag_path(args, "--config");
@@ -362,12 +367,34 @@ fn resolve_target(args: &[String], usage: &str) -> Result<(acm_core::AgentDef, P
         .iter()
         .find(|d| d.id == id)
         .ok_or_else(|| format!("注册表里没有 id = {id}"))?;
-    let src = def
+    let candidates: Vec<PathBuf> = def
         .paths
         .iter()
-        .find_map(|tpl| paths::expand(tpl).filter(|p| p.exists()))
-        .ok_or_else(|| format!("{} 的数据目录都不存在", def.name))?;
-    Ok((def.clone(), src))
+        .filter_map(|tpl| paths::expand(tpl))
+        .collect();
+
+    // ① 已经有快照的那个目录（回滚/修复的正主）
+    if let Some(p) = candidates
+        .iter()
+        .find(|p| !migrate::snapshots_of(p).is_empty())
+    {
+        return Ok((def.clone(), p.clone()));
+    }
+    // ② 链接（含断链）—— `symlink_metadata` 读得到就说明这东西存在
+    if let Some(p) = candidates
+        .iter()
+        .find(|p| p.symlink_metadata().is_ok())
+    {
+        return Ok((def.clone(), p.clone()));
+    }
+    // ③ 整个目录都没了，但父目录还在（可以据此重建链接）
+    if let Some(p) = candidates
+        .iter()
+        .find(|p| p.parent().is_some_and(|pp| pp.exists()))
+    {
+        return Ok((def.clone(), p.clone()));
+    }
+    Err(format!("{} 的数据目录都不存在", def.name))
 }
 
 fn confirm(prompt: &str, yes: bool) -> Result<bool, String> {
@@ -479,7 +506,9 @@ fn cmd_migrate(args: &[String]) -> Result<(), String> {
         );
         let ok = rep.ok;
         if json {
-            reports.push(rep.clone());
+            // JSON 模式只入列一次 —— 以前这里 clone 一份、循环尾部又 push 一遍，
+            // `acm migrate --json` 会把每个报告输出两遍。
+            reports.push(rep);
         } else {
             println!();
             for s in &rep.steps {
@@ -499,8 +528,8 @@ fn cmd_migrate(args: &[String]) -> Result<(), String> {
             } else if let Some(e) = &rep.error {
                 eprintln!("\n✗ 迁移失败：{e}（自动回滚：{}）", rep.rolled_back);
             }
+            reports.push(rep);
         }
-        reports.push(rep);
         if !ok {
             any_failed = true;
             break; // 逐目录顺序迁：前一个失败，后面的原地不动

@@ -4,6 +4,17 @@
 
 ## [未发布]
 
+### 修复（全仓审查 · 2026-11-19）
+
+- **删快照会把别人家的 ACL 改掉（实测确认）**：`remove_dir_forced` 删前跑 `icacls <root> /reset /T`，失败再跑 `attrib -R -S -H <root>\* /S /D` —— 这两条命令**都会穿进树内的目录联接**。实测：在 `tree\link → outside` 的联接上给 `outside\victim.txt` 加 `Everyone:(D)` 拒绝，跑 `icacls tree /reset /T` 后 DENY **被抹掉**；`attrib /S /D` 同样清掉了外部文件的只读属性。快照里很可能留着 WorkBuddy 那种指向**共享运行时**的联接（`binaries/python/versions/*`），删旧快照就会把应用正在用的运行时弄坏。现在：先自遍历**只摘掉树内联接**（链接本体，本来也要删），再直接 `remove_dir_all`，失败才动 ACL/属性；并且加了删除路径闸门（拒绝空路径、相对路径、盘符根/卷根、无文件名路径）。
+- **回滚「零丢失」有空档**：`rescue_changed_files` 原来只比大小 —— 「改了内容但长度没变」的编辑（配置、JSON、SQLite 页改写）会被判成没变，直接丢在旧快照里。现在修改时间也参与判定（3 秒容差，和迁移收敛同一把尺），误判方向是多备份、不丢数据。
+- **路径比较的大小写/分隔符地雷**：`dest_dir_name`、快照校验、修复的「指向对不对」判定都用 `PathBuf` 直接相等 —— `d:/a` 与 `D:\A` 一比就落空，多目录 Agent 会退回 `dest_root/<id>` 撞车、修复会误报「指向别处」。统一走 `same_path`（忽略大小写、`/` 与 `\`、`\\?\` 前缀）。
+- **体检（doctor）两处误报**：① 「正在运行」写在路径循环里，豆包这种双目录 Agent 会把同一条警告报两遍 —— 移到 Agent 级、只报一次；② 孤儿快照按名字反解 id，`%APPDATA%\Trae CN` / `WorkBuddy` 这类**不带点**的目录迁出的快照会被误报成「孤儿」—— 改成先与「所有声明路径」比对，再退回 id 匹配。
+- **`acm migrate --json` 每份报告输出两遍**：`if json { reports.push(rep.clone()) }` 之后又无条件 `reports.push(rep)`。
+- **`acm rollback` / `acm repair` 在真正需要它的时候罢工**：`resolve_target` 用 `p.exists()` 过滤，而**断链**的 `exists()` 是 false、整个目录没了也是 false —— 于是报「数据目录都不存在」，和界面那条放宽过的路不一致。现在按「有快照的目录 → 链接（含断链）→ 目录缺失但父目录在」三级解析。
+- **`\\?\UNC\` 网络路径被剥坏**：`fsutil::normalize` 把 `\\?\UNC\server\share` 剥成 `UNC\server\share`（相对路径），网络盘上的联接会被永久误判成断链。现在还原成 `\\server\share`。
+- **文档陈旧**：`migrate.rs` 顶部还在引用已删除的 `is_under_root`，已改为描述现在的 `pending_count`（大小 + 时间逐文件比对）。
+
 ### 修复（迁移内核 · 第二轮）
 
 - **预览里的「最终落点」跟实际复制不是一回事**：`plan` 还在用 `dest_root/<id>` 算落点，而真正复制/修复用的是能区分多目录的命名 —— 于是预览、目标体检、同盘判断全看错了地方，第二个数据目录照样会撞主目录的落点。现在三处统一成同一个命名规则（并加了断言：两个目录算出的落点必须不同）。
