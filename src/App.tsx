@@ -401,6 +401,9 @@ export default function App() {
                       {t("runningBadge", { list: cur.running.join(", ") })}
                     </span>
                   )}
+                  {cur.category === "cache" && (
+                    <span className="badge b-gray">{t("cacheTag")}</span>
+                  )}
                 </h1>
                 <p>
                   {classHintL(cur.class)} · {cur.kind} ·{" "}

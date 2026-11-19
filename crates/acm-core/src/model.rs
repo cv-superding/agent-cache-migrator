@@ -34,6 +34,11 @@ pub struct AgentDef {
     #[serde(default = "d_kind")]
     pub kind: String,
 
+    /// 分类：`agent`（默认，真的是个 Agent/助手）| `cache`（纯缓存 / 工具链目录，
+    /// 不是 Agent，比如 npm 缓存）。界面据此分组，别把它们混在一个「Agent」列表里。
+    #[serde(default = "d_category")]
+    pub category: String,
+
     /// 迁移建议等级：`safe` | `normal` | `special` | `system`
     #[serde(default = "d_class")]
     pub class: String,
@@ -78,6 +83,9 @@ pub struct EnvRelocate {
 fn d_kind() -> String {
     "generic".into()
 }
+fn d_category() -> String {
+    "agent".into()
+}
 fn d_class() -> String {
     "normal".into()
 }
@@ -92,6 +100,8 @@ pub struct DetectedAgent {
     pub vendor: Option<String>,
     pub kind: String,
     pub class: String,
+    /// 同 [`AgentDef::category`]：`agent` | `cache`
+    pub category: String,
     pub note: Option<String>,
     pub env_relocate: Option<EnvRelocate>,
 
@@ -185,6 +195,7 @@ mod state_tests {
             vendor: None,
             kind: "generic".into(),
             class: "normal".into(),
+            category: "agent".into(),
             note: None,
             env_relocate: None,
             detected,

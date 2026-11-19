@@ -14,6 +14,7 @@
 import chatboxPng from "./assets/agents/chatbox.png";
 import cherryPng from "./assets/agents/cherry.png";
 import codebuddyPng from "./assets/agents/codebuddy.png";
+import deepseekPng from "./assets/agents/deepseek.png";
 import doubaoPng from "./assets/agents/doubao.png";
 import feishuPng from "./assets/agents/feishu.png";
 import janPng from "./assets/agents/jan.png";
@@ -45,7 +46,9 @@ const AGENT_ICONS: Record<string, IconSpec> = {
   trae: { mark: "trae" },
   "trae-intl": { mark: "trae" },
   zcode: { png: zcodePng },
-  deepseek: { mark: "deepseek" },
+  // DeepSeek Harness 用的是它自己的应用图标（从 DeepSeek Harness.exe 里取的 256px），
+  // 不是深度求索的品牌鲸鱼标 —— 两者观感差别很大，别换回去。
+  deepseek: { png: deepseekPng },
   doubao: { png: doubaoPng },
   "gemini-cli": { mark: "gemini" },
   lmstudio: { mark: "lmstudio" },

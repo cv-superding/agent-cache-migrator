@@ -136,6 +136,20 @@ code {
   align-items: center;
   gap: 6px;
 }
+
+/* 分组小标题（Agent / 缓存目录）：比主标签更轻，用一条短竖线做视觉锚点 */
+.navlabel.sub {
+  padding: 9px 8px 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.navlabel.sub::before {
+  content: "";
+  width: 2px;
+  height: 9px;
+  border-radius: 2px;
+  background: #c3ccd8;
+}
 .nav {
   display: flex;
   flex-direction: column;

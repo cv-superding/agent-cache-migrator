@@ -79,6 +79,7 @@
 id        = "codex"
 name      = "Codex CLI"
 kind      = "cli"                     # cli | electron | generic
+category  = "agent"                   # agent（默认）| cache（纯缓存/工具链目录，不是 Agent）
 paths     = ["~/.codex"]              # 支持 ~ / %APPDATA% / %LOCALAPPDATA%
 processes = ["codex*"]                # 迁移前要退出的进程，可留空
 skip      = ["**/node_modules"]       # 可选：这些不进校验

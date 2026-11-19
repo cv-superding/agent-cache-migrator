@@ -21,12 +21,20 @@ function m(bytes: number, files: number, capped = false) {
   return { files, bytes, capped };
 }
 
-export const DEFS: AgentDef[] = [
+const DEFS_RAW: Omit<AgentDef, "category">[] = [
   { id: "workbuddy-cn", name: "WorkBuddy 国内版", vendor: "腾讯", kind: "electron", class: "normal", paths: ["~/.workbuddy"], updater: ["@genieworkbuddy-desktop-updater"], envRelocate: null, processes: ["WorkBuddy.exe"], skip: [], runtimeLinks: [], note: null },
   { id: "codex", name: "Codex CLI", vendor: "OpenAI", kind: "cli", class: "normal", paths: ["~/.codex"], updater: [], envRelocate: { env: "CODEX_HOME", note: "官方支持" }, processes: ["codex*"], skip: [], runtimeLinks: [], note: null },
 ];
 
-export const AGENTS: DetectedAgent[] = [
+/** 演示数据里哪些不是 Agent（与 agents.toml 的 `category` 对齐）。 */
+const NON_AGENT = new Set(["npm-cache"]);
+
+export const DEFS: AgentDef[] = DEFS_RAW.map((d) => ({
+  ...d,
+  category: NON_AGENT.has(d.id) ? "cache" : "agent",
+}));
+
+const AGENTS_RAW: Omit<DetectedAgent, "category">[] = [
   {
     id: "workbuddy-cn",
     name: "WorkBuddy 国内版",
@@ -362,6 +370,11 @@ export const AGENTS: DetectedAgent[] = [
     total: m(3.75 * GB, 37_638),
   },
 ];
+
+export const AGENTS: DetectedAgent[] = AGENTS_RAW.map((a) => ({
+  ...a,
+  category: NON_AGENT.has(a.id) ? "cache" : "agent",
+}));
 
 const GIB = 1024 ** 3;
 

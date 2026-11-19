@@ -53,7 +53,11 @@ export function Sidebar({
   onRescan: () => void;
   version?: string;
 }) {
+  // 侧栏分三组：Agent / 缓存目录（不是 Agent）/ 未安装。
+  // `category` 来自 agents.toml，别用名字或 kind 猜 —— npm 缓存就不是 Agent。
   const present = agents.filter((a) => a.detected);
+  const agentsOn = present.filter((a) => a.category !== "cache");
+  const cachesOn = present.filter((a) => a.category === "cache");
   const absent = agents.filter((a) => !a.detected);
   useLang(); // 语言切换时重渲染
 
@@ -69,7 +73,7 @@ export function Sidebar({
 
       <div className="nav">
         <div className="navlabel">
-          <span>{t("detectedCount", { n: present.length })}</span>
+          <span>{t("detectedSummary", { n: present.length, total: agents.length })}</span>
           {scanning && <span className="spin" style={{ marginRight: 0 }} />}
         </div>
 
@@ -79,7 +83,35 @@ export function Sidebar({
           </div>
         )}
 
-        {present.map((a) => (
+        {/* 只有「混着缓存」时才多出一层分组标签 —— 全是 Agent 时不多余提示 */}
+        {cachesOn.length > 0 && (
+          <div className="navlabel sub">{t("groupAgents", { n: agentsOn.length })}</div>
+        )}
+        {agentsOn.map((a) => (
+          <button
+            key={a.id}
+            className={`item${selected === a.id ? " on" : ""}`}
+            onClick={() => onPick(a.id)}
+            title={a.paths.map((p) => p.resolved).join("\n")}
+          >
+            <AgentIcon id={a.id} name={a.name} size={22} />
+            <span className="nm">{a.name}</span>
+            <span className="sz">{a.total.bytes > 0 ? human(a.total.bytes) : ""}</span>
+            <span
+              className={`dot ${a.running.length > 0 ? "running" : agentState(a)}`}
+              title={
+                a.running.length > 0
+                  ? t("runningTip", { list: a.running.join(", ") })
+                  : stateLabelL(agentState(a))
+              }
+            />
+          </button>
+        ))}
+
+        {cachesOn.length > 0 && (
+          <div className="navlabel sub">{t("groupCaches", { n: cachesOn.length })}</div>
+        )}
+        {cachesOn.map((a) => (
           <button
             key={a.id}
             className={`item${selected === a.id ? " on" : ""}`}

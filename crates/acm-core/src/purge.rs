@@ -220,6 +220,7 @@ mod tests {
             vendor: None,
             kind: "generic".into(),
             class: "normal".into(),
+            category: "agent".into(),
             paths: paths_tpl,
             updater: Vec::new(),
             env_relocate: None,

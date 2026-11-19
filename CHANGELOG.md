@@ -6,8 +6,13 @@
 
 ### 新增
 
+- **侧栏区分「Agent」与「缓存目录」**：`agents.toml` 新增 `category`（`agent` 默认 | `cache`），npm 缓存这类工具链目录标成 `cache` —— 侧栏拆成 `Agent（n）` / `缓存目录（n）` 两组，顶栏改成「已安装 n 项 · 共 N 项」，不再把所有东西都喊成「Agent」；详情页给缓存类条目挂一个「缓存」徽章。
 - **清理缓存（卸载残留）**：状态卡片底部新增「清理缓存」——把该 Agent 的**数据目录 / 更新器目录整体移入系统回收站**，清完重扫就落回「未安装」。典型场景：应用早就卸了，`%APPDATA%\Xxx` 还留着几百 MB。点之前先弹确认框，逐条列出将被清理的路径与体积（只读预览，`purge_agent` 的 `preview` 模式）。内核 `acm_core::purge` 守住三条：只动 `agents.toml` 声明过的路径；**联接一律跳过**（背后是真数据，先回滚再清）；有进程在跑先拒绝。回收站可还原，空间清空回收站才真正释放。CLI 同步 `acm purge <id> [--yes] [--json]`。
 - **CLI `acm purge`**（同上，`--json` 出报告给脚本用）。
+
+### 修正
+
+- **DeepSeek Harness 的图标不对**：之前用的是深度求索的品牌鲸鱼标；换成从 `DeepSeek Harness.exe` 里取出的 256px 应用图标（深色鲸鱼 + 浅色圆角方块），打包进 `src/assets/agents/deepseek.png`。
 
 ### 修正
 

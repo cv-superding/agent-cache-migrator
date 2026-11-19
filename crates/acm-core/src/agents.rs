@@ -198,6 +198,7 @@ pub fn detect_with(def: &AgentDef, opts: &DetectOpts, procs: &[String]) -> Detec
         vendor: def.vendor.clone(),
         kind: def.kind.clone(),
         class: def.class.clone(),
+        category: def.category.clone(),
         note: def.note.clone(),
         env_relocate: def.env_relocate.clone(),
         detected,

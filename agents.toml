@@ -34,6 +34,8 @@
 #  name         界面上显示的名字
 #  vendor       厂商（可选，界面上分组用）
 #  kind         electron | cli | generic
+#  category     agent（默认，真的是个 Agent/助手）| cache（纯缓存/工具链目录，
+#               不是 Agent，比如 npm 缓存）。界面按它分组 —— 别把缓存混进 Agent 列表。
 #  class        迁移建议等级（决定界面上的颜色与文案）
 #               safe     → 缓存类，放心迁
 #               normal   → 应用数据，退出该应用后可迁
@@ -310,6 +312,8 @@ id       = "npm-cache"
 name     = "npm 缓存"
 kind     = "generic"
 class    = "safe"
+# 它不是 Agent —— 是工具链缓存。界面按 category 分组，别混进「Agent」列表。
+category = "cache"
 paths    = ["%LOCALAPPDATA%/npm-cache", "~/.npm/_cacache"]
 processes = []
 note     = "纯缓存。搬走后 npm 会按需重新拉取。"

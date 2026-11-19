@@ -52,6 +52,10 @@ const zh = {
   // 侧栏
   brandSub: "Agent 缓存迁移器",
   detectedCount: "检测到 {n} 个 Agent",
+  detectedSummary: "已安装 {n} 项 · 共 {total} 项",
+  groupAgents: "Agent（{n}）",
+  groupCaches: "缓存目录（{n}）",
+  cacheTag: "缓存",
   noneDetected: "没有检测到任何 Agent。",
   notInstalled: "未安装（{n}）",
   rescan: "重新扫描",
@@ -192,6 +196,10 @@ export type DictKey = keyof typeof zh;
 const en: Record<DictKey, string> = {
   brandSub: "Agent cache migrator",
   detectedCount: "{n} agents detected",
+  detectedSummary: "{n} of {total} installed",
+  groupAgents: "Agents ({n})",
+  groupCaches: "Cache dirs ({n})",
+  cacheTag: "Cache",
   noneDetected: "No agents detected.",
   notInstalled: "Not installed ({n})",
   rescan: "Rescan",

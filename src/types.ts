@@ -40,6 +40,8 @@ export interface AgentDef {
   name: string;
   vendor: string | null;
   kind: string;
+  /** agent（真的是个 Agent）| cache（纯缓存/工具链目录） */
+  category: string;
   /** safe | normal | special | system */
   class: string;
   paths: string[];
@@ -56,6 +58,8 @@ export interface DetectedAgent {
   name: string;
   vendor: string | null;
   kind: string;
+  /** agent | cache —— 侧栏分组用 */
+  category: string;
   class: string;
   note: string | null;
   envRelocate: EnvRelocate | null;
