@@ -79,7 +79,7 @@ pub fn run_checks(defs: &[AgentDef]) -> Vec<Finding> {
     for def in defs {
         // 「正在运行」是**进程级**事实，一个 Agent 只该报一次 ——
         // 以前写在路径循环里，豆包这种双目录 Agent 会把同一条警告报两遍。
-        let running = crate::procs::matching_in(&procs, &def.processes);
+        let running = crate::procs::running_for(def, &procs);
         if !running.is_empty() {
             out.push(warn(
                 &def.id,

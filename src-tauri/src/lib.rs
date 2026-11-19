@@ -276,6 +276,27 @@ async fn purge_agent(agent_id: String, preview: Option<bool>) -> Result<Value, S
     .map_err(|e| format!("清理任务异常：{e}"))?
 }
 
+/// 结束某个 Agent 的进程 —— 详情页「运行状态」旁边的「结束进程」按钮。
+///
+/// 场景：`tasklist` 名字匹配当兜底，偶尔漏（进程刚起 / 权限 / 名字对不上），
+/// 用户明明自己关了，界面还说「运行中」，迁移也被拦着。与其让他去任务管理器
+/// 里翻，不如给一个明确目标：按注册表的 `processes` 结束，`ignore_processes`
+/// 里的常驻服务**不碰**（杀了可能让应用再也起不来）。
+#[tauri::command]
+async fn close_agent(agent_id: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let defs = agents::load(None)?;
+        let def = defs
+            .iter()
+            .find(|d| d.id == agent_id)
+            .ok_or_else(|| format!("注册表里没有 id = {agent_id}"))?;
+        let rep = acm_core::procs::kill_agent_processes(&def.processes, &def.ignore_processes);
+        serde_json::to_value(rep).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("结束进程任务异常：{e}"))?
+}
+
 /// 清空迁移历史 —— 界面上「迁移历史」卡片里的「清空」按钮。
 #[tauri::command]
 async fn clear_history() -> Result<Value, String> {
@@ -461,6 +482,7 @@ pub fn run() {
             measure_agent,
             env_set,
             purge_agent,
+            close_agent,
             delete_snapshot,
             open_path,
             version,

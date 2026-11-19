@@ -363,7 +363,7 @@ pub fn plan(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<Plan, String
     }
 
     // ② 按配置再核对一次进程名（兜底：有些应用只在子进程里持有文件）
-    let running = crate::procs::running_matching(&def.processes);
+    let running = crate::procs::running_agent(def);
     if !running.is_empty() {
         let extra: Vec<String> = running
             .into_iter()
@@ -1209,7 +1209,7 @@ pub fn repair(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<RepairRepo
     };
 
     // 应用在跑就不动 —— 重建的那一瞬间它手里的句柄会失效
-    let running = crate::procs::running_matching(&def.processes);
+    let running = crate::procs::running_agent(def);
     if !running.is_empty() {
         return Err(format!(
             "请先退出：{}（修复前不能有进程占用）",
@@ -3306,6 +3306,7 @@ env = "AC_TEST_ROLLBACK_VAR"
             updater: Vec::new(),
             env_relocate: None,
             processes: Vec::new(),
+            ignore_processes: Vec::new(),
             skip: Vec::new(),
             runtime_links: Vec::new(),
             note: None,

@@ -111,6 +111,7 @@ class    = "normal"
 paths    = ["~/.codex"]
 env_relocate = { env = "CODEX_HOME", note = "Codex 自己认这个变量，设了就不必建联接" }
 processes = ["codex*"]
+ignore_processes = ["codex-windows-sandbox-service.exe"]
 note     = "CLI 无常驻进程，但正在跑的会话会持续写。想用官方开关就别勾「搬目录」。"
 
 [[agent]]
@@ -202,7 +203,10 @@ vendor   = "Google"
 kind     = "cli"
 class    = "normal"
 paths    = ["~/.gemini"]
-processes = ["gemini*"]
+# `gemini*` 太宽：会把用户自建的 `gemini-web2api-go.exe` 算成「Gemini CLI 在跑」。
+# 只认 CLI 本体，别的写到 ignore 里（仍然能看见、但不算运行中、也不杀）。
+processes = ["gemini.exe", "gemini-cli.exe"]
+ignore_processes = ["gemini-web2api*.exe", "gemini-*-go.exe"]
 note     = "CLI 无常驻进程，但正在跑的会话会持续写。"
 
 

@@ -200,7 +200,17 @@ pub fn detect_with_install(
     }
 
     let broken_links = check_runtime_links(def, &hits);
-    let running = procs::matching_in(procs, &def.processes);
+    // 口径统一在 `procs::running_for`：命中 `processes`、且不在 `ignore_processes` 里。
+    let mut ignored = procs::matching_in(procs, &def.ignore_processes);
+    let running = procs::running_for(def, procs);
+    if !ignored.is_empty() {
+        ignored.sort();
+        ignored.dedup();
+        how.push(format!(
+            "不计入「运行中」的进程（服务 / 无关程序）：{}",
+            ignored.join("、")
+        ));
+    }
 
     let detected = hits.iter().any(|h| h.kind != "missing") || !updaters.is_empty();
 
@@ -236,6 +246,7 @@ pub fn detect_with_install(
         updaters,
         broken_links,
         running,
+        ignored,
         total,
     }
 }

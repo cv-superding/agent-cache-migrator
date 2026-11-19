@@ -229,6 +229,7 @@ code {
 .aic {
   display: block;
   object-fit: contain;
+  flex: none;
 }
 .aic-mono {
   display: grid;
@@ -894,6 +895,16 @@ table.t td.mono {
 }
 .hrow:last-child {
   border-bottom: 0;
+}
+/* 首行 = 状态徽章 + 时间 + 图标/名字。以前是三个 inline 元素直接排，
+   首字母兜底徽章（比如 raccoon-work 的「R」）会紧贴时间戳、还比文字偏上 ——
+   换成 flex 一行，间距和对齐统一交给 layout。 */
+.hrow .hhead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  row-gap: 4px;
 }
 .hrow .ts {
   color: var(--muted);

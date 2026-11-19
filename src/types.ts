@@ -78,6 +78,8 @@ export interface DetectedAgent {
   updaters: string[];
   brokenLinks: BrokenLink[];
   running: string[];
+  /** 命中了但被 `ignore_processes` 排除的常驻服务（不算应用在跑） */
+  ignored: string[];
   total: Measure;
 }
 

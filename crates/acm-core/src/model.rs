@@ -59,6 +59,15 @@ pub struct AgentDef {
     #[serde(default)]
     pub processes: Vec<String>,
 
+    /// **不算「应用在跑」的进程**（常驻服务 / 守护进程 / 沙箱宿主）。
+    ///
+    /// 比如 Codex 的 `codex-windows-sandbox-service.exe` 是后台服务：
+    /// 用户明明关掉了 Codex，它还在 → 界面一直显示「运行中」，迁移也被拦住。
+    /// 这些名字从 `processes` 的匹配结果里**减掉**（支持 `*`），
+    /// 「结束进程」也不会去杀它们（杀服务可能让应用再也起不来）。
+    #[serde(default)]
+    pub ignore_processes: Vec<String>,
+
     /// 校验时跳过的 glob
     #[serde(default)]
     pub skip: Vec<String>,
@@ -137,6 +146,9 @@ pub struct DetectedAgent {
     pub broken_links: Vec<BrokenLink>,
     /// 匹配到的运行中进程名
     pub running: Vec<String>,
+    /// 命中但被 `ignore_processes` 排除的进程（常驻服务 / 沙箱宿主）——
+    /// 界面要用灰字说明「它在跑，但不算应用在运行」，免得用户以为漏检。
+    pub ignored: Vec<String>,
     /// 该 Agent 的总占用（只统计真实存在的、且不跟随联接）
     pub total: crate::fsutil::Measure,
 }
@@ -231,6 +243,7 @@ mod state_tests {
             updaters: Vec::new(),
             broken_links: Vec::new(),
             running,
+            ignored: Vec::new(),
             total: Measure::default(),
         }
     }

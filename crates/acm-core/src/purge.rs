@@ -59,7 +59,7 @@ pub fn preview(def: &AgentDef) -> Vec<PurgeItem> {
 pub fn run(def: &AgentDef) -> Result<PurgeReport, String> {
     // 应用还在跑就别动 —— 文件被占用，删一半会留下更烂的状态
     let snapshot = procs::snapshot();
-    let running = procs::matching_in(&snapshot, &def.processes);
+    let running = procs::running_for(def, &snapshot);
     if !running.is_empty() {
         return Err(format!(
             "{} 还在运行（{}）—— 先完全退出（托盘图标也要退）再清理",
@@ -241,6 +241,7 @@ mod tests {
             updater: Vec::new(),
             env_relocate: None,
             processes: Vec::new(),
+            ignore_processes: Vec::new(),
             skip: Vec::new(),
             runtime_links: Vec::new(),
             note: None,

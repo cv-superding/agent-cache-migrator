@@ -104,6 +104,105 @@ pub fn running_matching(patterns: &[String]) -> Vec<String> {
     matching_in(&snapshot(), patterns)
 }
 
+/// 某个 Agent「算在跑」的进程 —— 命中 `processes` 且**不在** `ignore_processes` 里。
+///
+/// 检测、体检、迁移阻断、清理、修复**全部走这一个函数**：口径必须一致，
+/// 否则会出现「详情页说没在跑、点迁移却说被占用」这种自相矛盾。
+pub fn running_for(def: &crate::model::AgentDef, names: &[String]) -> Vec<String> {
+    matching_in(names, &def.processes)
+        .into_iter()
+        .filter(|n| !def.ignore_processes.iter().any(|p| matches(p, n)))
+        .collect()
+}
+
+/// 见 [`running_for`]，自己取一次进程快照（只适合调用一次的场景）。
+pub fn running_agent(def: &crate::model::AgentDef) -> Vec<String> {
+    running_for(def, &snapshot())
+}
+
+/// 「结束进程」的结果。
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KillReport {
+    /// 真的发过结束请求的进程名
+    pub killed: Vec<String>,
+    /// 结束失败 / 拒绝结束的（名字 + 原因）
+    pub failed: Vec<KillFailure>,
+    /// 结束前就没在跑的（正常现象：用户已经自己关了）
+    pub not_running: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KillFailure {
+    pub name: String,
+    pub reason: String,
+}
+
+/// 结束某个 Agent 的进程。
+///
+/// - `patterns`：算「应用在跑」的进程（与 `running` 同一套匹配）
+/// - `ignore`：**绝不杀**的常驻服务（`ignore_processes`）—— 杀服务可能让应用起不来
+///
+/// 为什么需要这个功能：`tasklist` 是名字匹配的兜底手段，偶尔会漏（进程刚起、
+/// 权限、名字对不上），于是界面上「明明关了还说在跑」。与其让用户去任务管理器
+/// 里翻，不如给一个明确目标：「结束这些进程」。
+pub fn kill_agent_processes(patterns: &[String], ignore: &[String]) -> KillReport {
+    let names = matching_in(&snapshot(), patterns);
+    let mut rep = KillReport::default();
+    if names.is_empty() {
+        rep.not_running.push("（没有匹配到进程）".to_string());
+        return rep;
+    }
+    for name in names {
+        if ignore.iter().any(|p| matches(p, &name)) {
+            rep.failed.push(KillFailure {
+                name,
+                reason: "这是后台服务（ignore_processes），不自动结束".to_string(),
+            });
+            continue;
+        }
+        match imp_kill::kill_by_name(&name) {
+            Ok(()) => rep.killed.push(name),
+            Err(e) => rep.failed.push(KillFailure { name, reason: e }),
+        }
+    }
+    rep
+}
+
+#[cfg(windows)]
+mod imp_kill {
+    /// Windows：`taskkill /F /T /IM <name>`（`/T` 连带子进程树）。
+    pub fn kill_by_name(name: &str) -> Result<(), String> {
+        let out = crate::syscmd::command("taskkill")
+            .args(["/F", "/T", "/IM", name])
+            .output()
+            .map_err(|e| format!("起不了 taskkill：{e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        // taskkill 失败时错误在 stdout（中文机器上是 GBK，按 lossy 读够用）
+        let msg = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let msg = if msg.is_empty() {
+            format!("taskkill 退出码 {}", out.status.code().unwrap_or(-1))
+        } else {
+            msg
+        };
+        // 「找不到进程」= 已经退出了，不算失败
+        if msg.contains("128") || msg.contains("not found") || msg.contains("没有找到") {
+            return Ok(());
+        }
+        Err(msg)
+    }
+}
+
+#[cfg(not(windows))]
+mod imp_kill {
+    pub fn kill_by_name(_name: &str) -> Result<(), String> {
+        Err("当前平台不支持一键结束进程（请手动退出应用）".to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -168,6 +267,45 @@ mod tests {
         assert_eq!(
             matching_in(&dup, &["*.exe".into()]),
             vec!["a.exe".to_string(), "b.exe".to_string()]
+        );
+    }
+
+    /// `ignore_processes` 里的常驻服务不能算「应用在跑」——
+    /// 否则 Codex 关了还永远显示运行中、迁移被永久拦住。
+    #[test]
+    fn ignore_processes_drops_background_service() {
+        let def: crate::model::AgentDef = toml::from_str(
+            r#"
+id = "codex"
+name = "Codex CLI"
+processes = ["codex*"]
+ignore_processes = ["codex-windows-sandbox-service.exe"]
+"#,
+        )
+        .unwrap();
+
+        let snap: Vec<String> = [
+            "codex.exe",
+            "Codex-Windows-Sandbox-Service.exe",
+            "explorer.exe",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        // 用户真的开着 codex.exe → 算运行中
+        assert_eq!(running_for(&def, &snap), vec!["codex.exe".to_string()]);
+
+        // 只剩后台服务（大小写不同也要认出）→ 不算运行中
+        let only_service: Vec<String> = ["Codex-Windows-Sandbox-Service.exe"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(running_for(&def, &only_service).is_empty());
+        // 但它要在 ignored 里露个脸，别装看不见
+        assert_eq!(
+            matching_in(&only_service, &def.ignore_processes),
+            vec!["Codex-Windows-Sandbox-Service.exe".to_string()]
         );
     }
 }

@@ -217,6 +217,20 @@ export function deleteSnapshot(
   return invoke("delete_snapshot", { path, permanent });
 }
 
+export interface KillReport {
+  killed: string[];
+  failed: { name: string; reason: string }[];
+  notRunning: string[];
+}
+
+/** 结束某个 Agent 的进程（后台服务不杀）。 */
+export function closeAgent(agentId: string): Promise<KillReport> {
+  if (DEMO) {
+    return Promise.resolve({ killed: ["codex.exe"], failed: [], notRunning: [] });
+  }
+  return invoke<KillReport>("close_agent", { agentId });
+}
+
 export function openPath(path: string): Promise<void> {
   if (DEMO) {
     console.info("[demo] 打开路径：", path);
@@ -258,6 +272,7 @@ export const api = {
   repair,
   setEnv,
   purgeAgent,
+  closeAgent,
   measureAgent,
   snapshots,
   history,

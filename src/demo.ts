@@ -37,7 +37,7 @@ export const DEFS: AgentDef[] = DEFS_RAW.map((d) => ({
   install: null,
 }));
 
-const AGENTS_RAW: Omit<DetectedAgent, "category" | "installed">[] = [
+const AGENTS_RAW: Omit<DetectedAgent, "category" | "installed" | "ignored">[] = [
   {
     id: "workbuddy-cn",
     name: "WorkBuddy 国内版",
@@ -433,6 +433,8 @@ export const AGENTS: DetectedAgent[] = AGENTS_RAW.map((a) => ({
   ...a,
   category: NON_AGENT.has(a.id) ? "cache" : "agent",
   installed: UNINSTALLED.has(a.id) ? false : true,
+  // Codex 的沙箱服务常驻：演示「后台服务不算运行中」这条提示
+  ignored: a.id === "codex" ? ["codex-windows-sandbox-service.exe"] : [],
 }));
 
 const GIB = 1024 ** 3;

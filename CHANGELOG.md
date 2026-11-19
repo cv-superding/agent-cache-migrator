@@ -4,6 +4,15 @@
 
 ## [未发布]
 
+### 新增（2026-11-19 · 结束进程 / 运行判定）
+
+- **「结束进程」按钮 + `acm kill`**：详情页「运行状态」旁边新增按钮（确认框列出将被结束的进程名，完成后自动重扫）。内核 `procs::kill_agent_processes` 走 `taskkill /F /T /IM`（连杀子进程树），CLI 同步 `acm kill <id> [--yes] [--json]`。为什么需要它：`tasklist` 是名字匹配的兜底手段，偶尔漏（进程刚起 / 权限 / 名字对不上），界面上就会「明明关了还说在跑」，迁移也被拦着 —— 与其让用户去任务管理器里翻，不如给一个明确目标。
+- **`agents.toml` 新增 `ignore_processes`**：常驻服务 / 沙箱宿主 / 无关程序的名单，匹配结果从「运行中」里**减掉**，「结束进程」也不去杀它们。已给 Codex 配 `codex-windows-sandbox-service.exe`（这服务关不掉，导致 Codex 永远显示运行中）、给 Gemini CLI 配 `gemini-web2api*.exe`（用户自建程序被 `gemini*` 误命中）。检测 / `doctor` / `plan` 阻断 / 清理 / 修复统一走 `procs::running_for`，口径不会再自相矛盾；命中的被忽略进程在详情页用灰字列出来（不装看不见）。
+
+### 修复
+
+- **迁移历史首行的字母徽章「紧贴时间、还偏上」**：`raccoon-work` 这类没登记真图标的 Agent 走首字母兜底徽章（「R」），原来三个 inline 元素直接排 —— 徽章贴着时间戳、且 inline-flex 按基线对齐显得偏上。首行改成 flex 容器（`.hhead`，`align-items: center` + 统一 `gap`），徽章、时间、图标+名字一行对齐；`.aic` 补 `flex: none` 防止被压扁。
+
 ### 修复（全仓审查 · 2026-11-19）
 
 - **删快照会把别人家的 ACL 改掉（实测确认）**：`remove_dir_forced` 删前跑 `icacls <root> /reset /T`，失败再跑 `attrib -R -S -H <root>\* /S /D` —— 这两条命令**都会穿进树内的目录联接**。实测：在 `tree\link → outside` 的联接上给 `outside\victim.txt` 加 `Everyone:(D)` 拒绝，跑 `icacls tree /reset /T` 后 DENY **被抹掉**；`attrib /S /D` 同样清掉了外部文件的只读属性。快照里很可能留着 WorkBuddy 那种指向**共享运行时**的联接（`binaries/python/versions/*`），删旧快照就会把应用正在用的运行时弄坏。现在：先自遍历**只摘掉树内联接**（链接本体，本来也要删），再直接 `remove_dir_all`，失败才动 ACL/属性；并且加了删除路径闸门（拒绝空路径、相对路径、盘符根/卷根、无文件名路径）。

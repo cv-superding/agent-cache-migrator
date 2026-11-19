@@ -51,6 +51,8 @@ export default function App() {
   const [repairing, setRepairing] = useState(false);
   const [settingEnv, setSettingEnv] = useState(false);
   const [purging, setPurging] = useState(false);
+  /** 正在结束某个 Agent 的进程（「运行状态」旁边的按钮）。 */
+  const [closing, setClosing] = useState(false);
   /** 精确统计结果（只对当前选中的 Agent；列表里的数是「扫到上限」的下限）。 */
   const [exact, setExact] = useState<{
     id: string;
@@ -277,6 +279,31 @@ export default function App() {
       toast(t("toastRepairFailed"), String(e), true);
     } finally {
       setRepairing(false);
+    }
+  }
+
+  /** 结束进程 —— 解决「明明关了还说在跑」：按注册表的进程名精确收，后台服务不碰。 */
+  async function doClose(id: string) {
+    setClosing(true);
+    try {
+      const r = await api.closeAgent(id);
+      if (r.killed.length > 0) {
+        toast(t("toastClosed"), r.killed.join("、"));
+      } else if (r.failed.length > 0) {
+        toast(
+          t("toastCloseFailed"),
+          r.failed.map((f) => `${f.name}：${f.reason}`).join("；"),
+          true,
+        );
+      } else {
+        toast(t("toastCloseNone"), "");
+      }
+    } catch (e) {
+      toast(t("toastCloseFailed"), String(e), true);
+    } finally {
+      setClosing(false);
+      // 重扫一次：把「已经退出的」从运行状态里摘掉
+      await refreshAgents(false);
     }
   }
 
@@ -537,6 +564,30 @@ export default function App() {
                     onOk: () => void doSetEnv(id),
                   });
                 }}
+                closing={closing}
+                onClose={(id) => {
+                  const a = agents.find((x) => x.id === id);
+                  setConfirm({
+                    title: t("closeTitle"),
+                    okText: t("closeOk"),
+                    danger: true,
+                    body: (
+                      <>
+                        会强制结束 <b>{a?.name ?? id}</b> 的这些进程：
+                        <div className="mono" style={{ margin: "8px 0" }}>
+                          {(a?.running ?? []).join("、")}
+                        </div>
+                        <div className="note warn">
+                          未保存的内容会丢。这是<b>强杀</b>（taskkill /F /T），
+                          {a?.ignored?.length
+                            ? `不计入运行的进程（${a.ignored.join("、")}）不会被动。`
+                            : "后台服务不会被动。"}
+                        </div>
+                      </>
+                    ),
+                    onOk: () => void doClose(id),
+                  });
+                }}
               />
               {/* 应用已经卸载、只剩缓存时，迁移 / 目标盘两张卡片没有意义 —— 只留清理 */}
               {agentState(cur) !== "orphan" && (
@@ -759,6 +810,8 @@ function StatusCard({
   exact,
   measuring,
   onMeasure,
+  closing,
+  onClose,
 }: {
   a: DetectedAgent;
   onRepair?: (id: string) => void;
@@ -771,6 +824,9 @@ function StatusCard({
   exact?: { total: Measure; paths: { resolved: string; bytes: number; files: number }[] } | null;
   measuring?: boolean;
   onMeasure?: (id: string) => void;
+  /** 正在结束进程 */
+  closing?: boolean;
+  onClose?: (id: string) => void;
 }) {
   const st = agentState(a);
   const shown = a.paths.filter((p) => p.kind !== "missing");
@@ -870,11 +926,32 @@ function StatusCard({
         <Row
           k={t("rowRunning")}
           v={
-            a.running.length > 0 ? (
-              <span className="badge b-warn">{t("runningState", { list: a.running.join(", ") })}</span>
-            ) : (
-              <span className="badge b-ok">{t("notRunning")}</span>
-            )
+            <>
+              {a.running.length > 0 ? (
+                <>
+                  <span className="badge b-warn">{t("runningState", { list: a.running.join(", ") })}</span>
+                  {onClose && (
+                    <button
+                      className="btn xs dangerghost"
+                      style={{ marginLeft: 8 }}
+                      disabled={closing}
+                      title={t("closeTip")}
+                      onClick={() => onClose(a.id)}
+                    >
+                      {closing ? t("closing") : t("closeBtn")}
+                    </button>
+                  )}
+                </>
+              ) : (
+                <span className="badge b-ok">{t("notRunning")}</span>
+              )}
+              {/* 命中的常驻服务：不计入「运行中」，但也别装看不见 */}
+              {a.ignored.length > 0 && (
+                <div style={{ color: "var(--muted)", marginTop: 3, fontSize: 11.5 }}>
+                  {t("ignoredProcs", { list: a.ignored.join(", ") })}
+                </div>
+              )}
+            </>
           }
         />
         {a.envRelocate && onSetEnv && st !== "absent" && (
@@ -1040,12 +1117,14 @@ function HistoryCard({
                 <div key={`${it.ts}-${i}`} className="hrow">
                   {isEnv ? (
                     <>
-                      <span className="badge b-gray">{t("badgeEnv")}</span>{" "}
-                      <span className="ts">{it.ts}</span>
-                      <span className="agentcell">
-                        <AgentIcon id={it.agent} name={nameOf(it.agent)} size={16} />
-                        <b>{nameOf(it.agent)}</b>
-                      </span>
+                      <div className="hhead">
+                        <span className="badge b-gray">{t("badgeEnv")}</span>
+                        <span className="ts">{it.ts}</span>
+                        <span className="agentcell">
+                          <AgentIcon id={it.agent} name={nameOf(it.agent)} size={16} />
+                          <b>{nameOf(it.agent)}</b>
+                        </span>
+                      </div>
                       <div className="mono sub" style={{ opacity: 0.8, marginTop: 2 }}>
                         {it.var} —— {it.action}
                       </div>
@@ -1053,14 +1132,16 @@ function HistoryCard({
                     </>
                   ) : (
                     <>
-                      <span className={it.ok ? "badge b-ok" : "badge b-danger"}>
-                        {it.ok ? t("ok") : t("fail")}
-                      </span>{" "}
-                      <span className="ts">{it.ts}</span>
-                      <span className="agentcell">
-                        <AgentIcon id={it.agent} name={nameOf(it.agent)} size={16} />
-                        <b>{nameOf(it.agent)}</b>
-                      </span>
+                      <div className="hhead">
+                        <span className={it.ok ? "badge b-ok" : "badge b-danger"}>
+                          {it.ok ? t("ok") : t("fail")}
+                        </span>
+                        <span className="ts">{it.ts}</span>
+                        <span className="agentcell">
+                          <AgentIcon id={it.agent} name={nameOf(it.agent)} size={16} />
+                          <b>{nameOf(it.agent)}</b>
+                        </span>
+                      </div>
                       <div className="mono sub" style={{ opacity: 0.8, marginTop: 2 }}>
                         {it.src} → {it.dest}
                       </div>

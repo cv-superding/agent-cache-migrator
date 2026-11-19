@@ -22,6 +22,7 @@ acm —— AgentCache 命令行
   acm env <id> [选项]        设置/删除 Agent 官方支持的重定位环境变量（仅限配了 env_relocate 的）
   acm purge <id> [--yes]     清理缓存：把数据目录 / 更新器目录整体移入回收站
                             （卸载残留、想把应用重置回干净状态时用；联接会跳过）
+  acm kill <id> [--yes]      结束该 Agent 的进程（后台服务不杀），解决「明明关了还说在跑」
   acm snapshots              列出所有迁移快照（原目录改名保留的那份）
   acm history [--all] [--clear]  查看迁移历史（最近 20 条，--all 全部；--clear 清空日志）
   acm doctor [--json]        体检：断链 / 运行中 / 快照脏状态 / 孤儿快照，附修复命令
@@ -63,6 +64,11 @@ purge 选项:
   --yes                  跳过交互确认
   --json                 输出 JSON 报告
   --config <路径>        同上
+
+kill 选项:
+  --yes                  跳过交互确认
+  --json                 输出 JSON 报告
+  --config <路径>        同上
 ";
 
 fn main() -> ExitCode {
@@ -78,6 +84,7 @@ fn main() -> ExitCode {
         "repair" => cmd_repair(&args[1..]),
         "env" => cmd_env(&args[1..]),
         "purge" => cmd_purge(&args[1..]),
+        "kill" | "close" => cmd_kill(&args[1..]),
         "snapshots" => cmd_snapshots(&args[1..]),
         "history" => cmd_history(&args[1..]),
         "doctor" => cmd_doctor(&args[1..]),
@@ -797,6 +804,59 @@ fn cmd_purge(args: &[String]) -> Result<(), String> {
     }
     if !rep.ok {
         return Err("有目录没能清理".into());
+    }
+    Ok(())
+}
+
+fn cmd_kill(args: &[String]) -> Result<(), String> {
+    let usage = "用法：acm kill <agent-id> [--yes] [--json] [--config <路径>]";
+    let yes = args.iter().any(|a| a == "--yes");
+    let json = args.iter().any(|a| a == "--json");
+    let id = positional(args, usage)?;
+    let cfg = flag_path(args, "--config");
+    let defs = agents::load(cfg.as_deref())?;
+    let def = defs
+        .iter()
+        .find(|d| d.id == id)
+        .ok_or_else(|| format!("注册表里没有 id = {id}"))?;
+
+    let running = acm_core::procs::running_agent(def);
+    if running.is_empty() {
+        println!("{} 没有在运行的进程（可能已经退出了）。", def.name);
+        return Ok(());
+    }
+
+    if !confirm(
+        &format!(
+            "结束 {} 的进程？\n  {}\n⚠ 未保存的工作会丢失；后台服务不在这个名单里（不会去杀）。",
+            def.name,
+            running.join("、")
+        ),
+        yes,
+    )? {
+        println!("已取消。");
+        return Ok(());
+    }
+
+    let rep = acm_core::procs::kill_agent_processes(&def.processes, &def.ignore_processes);
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rep).map_err(|e| e.to_string())?
+        );
+    } else {
+        for n in &rep.killed {
+            println!("✓ 已结束 {n}");
+        }
+        for f in &rep.failed {
+            println!("✗ {} —— {}", f.name, f.reason);
+        }
+        if rep.killed.is_empty() && rep.failed.is_empty() {
+            println!("没有可结束的进程。");
+        }
+    }
+    if !rep.failed.is_empty() && rep.killed.is_empty() {
+        return Err("一个进程都没能结束".into());
     }
     Ok(())
 }
