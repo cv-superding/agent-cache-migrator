@@ -111,7 +111,7 @@ const zh = {
   purging: "清理中…",
   purgeHint: "数据目录整体移入回收站 —— 卸载残留清完就变「未安装」",
   purgeWarn:
-    "会把这个 Agent 的数据目录整体移入系统回收站：登录状态、聊天记录、配置都会没。空间要清空回收站才真正释放；已迁移（联接）的目录会自动跳过（先回滚再清）。",
+    "会把这个 Agent 的所有数据目录整体移入系统回收站：主目录（GB 级数据）+ 附带目录（往往只有几个配置文件，也一起清，否则重扫还会认为它装着）。登录状态、聊天记录、配置都会没；空间要清空回收站才真正释放；已迁移（联接）的目录会自动跳过（先回滚再清）。",
   purgeSkipTag: "跳过",
   purgeNothing: "没有可清理的目录（可能已经清过了）",
   purgeRunning: "应用还在运行 —— 先完全退出（含托盘图标）再清理",
@@ -269,7 +269,7 @@ const en: Record<DictKey, string> = {
   purging: "Purging…",
   purgeHint: "Moves the whole data dir to the Recycle Bin — leftovers gone, agent drops to \"not installed\"",
   purgeWarn:
-    "This moves the agent's data dir to the system Recycle Bin: sign-in state, chat history and settings are all gone. Space is only freed once the bin is emptied. Migrated (junction) dirs are skipped automatically — roll back first if you want those gone.",
+    "This moves every data dir of this agent to the system Recycle Bin: the main one (GBs of real data) plus the small companion dir (usually a few config files — it goes too, otherwise a rescan still thinks the app is installed). Sign-in state, chat history and settings are all gone. Space is only freed once the bin is emptied. Migrated (junction) dirs are skipped automatically — roll back first if you want those gone.",
   purgeSkipTag: "skipped",
   purgeNothing: "Nothing to purge (maybe already cleaned)",
   purgeRunning: "The app is still running — quit it fully (tray icon too) first",

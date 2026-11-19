@@ -392,9 +392,11 @@ fn version() -> Value {
 
 /// 把 agent id 解析成 (定义, 源目录)。
 ///
-/// 只取**第一个真实存在**的数据目录 —— 一个 Agent 声明多个目录时，
-/// 界面上的「迁移」按钮对应的是「这个 Agent 的主目录」。
-/// 需要逐个处理的场景交给 `plan`/CLI。
+/// 取**第一个还没被迁移的真实目录**：一个 Agent 声明多个数据目录时（豆包就是
+/// `%LOCALAPPDATA%\Doubao` 真数据 + `%APPDATA%\Doubao` 几个配置文件），
+/// 主目录迁完之后，「迁移」按钮应该指向下一个还没迁的目录，
+/// 而不是每次都撞上「已经是联接了」这句废话。
+/// 全迁完了才退回第一个存在的路径 —— 让 `plan` 报「已经迁移过」。
 fn resolve(agent_id: &str) -> Result<(acm_core::AgentDef, PathBuf), String> {
     let defs = agents::load(None)?;
     let def = defs
@@ -402,12 +404,19 @@ fn resolve(agent_id: &str) -> Result<(acm_core::AgentDef, PathBuf), String> {
         .find(|d| d.id == agent_id)
         .ok_or_else(|| format!("注册表里没有 id = {agent_id}"))?;
 
+    let mut migrated: Option<PathBuf> = None;
     for tpl in &def.paths {
-        if let Some(p) = paths::expand(tpl) {
-            if p.exists() {
-                return Ok((def, p));
-            }
+        let Some(p) = paths::expand(tpl) else { continue };
+        if acm_core::fsutil::is_link(&p) {
+            migrated.get_or_insert(p);
+            continue;
         }
+        if p.exists() {
+            return Ok((def, p));
+        }
+    }
+    if let Some(p) = migrated {
+        return Ok((def, p));
     }
     Err(format!("{} 的数据目录都不存在", def.name))
 }

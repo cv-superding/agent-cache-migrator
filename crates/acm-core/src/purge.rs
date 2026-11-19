@@ -122,12 +122,28 @@ pub fn purge_by_id(id: &str) -> Result<PurgeReport, String> {
 }
 
 /// 注册表里声明过、且当前**真实存在**的路径。
+///
+/// 🔴 **每个存在的目录都要清**，包括「只有配置」的小目录：很多应用（豆包就是）
+/// 把数据拆在 `%LOCALAPPDATA%`（GB 级真数据）和 `%APPDATA%`（几个配置文件）两处，
+/// 只清主目录会留下一份「看着空、其实还在」的残留，扫描时仍然被判成「已安装」。
+///
+/// 标签上区分主 / 附带，用户一眼能看出「那个 1.89 KB 的也会一起清」。
 fn candidates(def: &AgentDef) -> Vec<(&'static str, PathBuf)> {
     let mut out: Vec<(&'static str, PathBuf)> = Vec::new();
+    let first_existing = def
+        .paths
+        .iter()
+        .filter_map(|tpl| paths::expand(tpl))
+        .find(|p| p.symlink_metadata().is_ok());
     for tpl in &def.paths {
         if let Some(p) = paths::expand(tpl) {
             if p.symlink_metadata().is_ok() {
-                out.push(("数据目录", p));
+                let label = if Some(&p) == first_existing.as_ref() {
+                    "主数据目录"
+                } else {
+                    "附带目录（多为配置）"
+                };
+                out.push((label, p));
             }
         }
     }
@@ -253,7 +269,33 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// 联接必须是 skip —— 清理联接等于让应用的数据凭空消失。
+    /// 🔴 主目录 + 「只有配置」的小目录**都要进清单**。
+    ///
+    /// 豆包里就是这样：`%LOCALAPPDATA%\Doubao` 是 3.8 GB 真数据、
+    /// `%APPDATA%\Doubao` 只有 1.89 KB 的 public_config.json ——
+    /// 只清前者会留下一份「看着空、其实还在」的残留。
+    #[test]
+    fn preview_includes_config_only_dir_with_its_own_label() {
+        let tmp = std::env::temp_dir().join("acm-purge-two-dirs");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("main")).unwrap();
+        std::fs::create_dir_all(tmp.join("cfg")).unwrap();
+        std::fs::write(tmp.join("main/big.bin"), vec![0u8; 4096]).unwrap();
+        std::fs::write(tmp.join("cfg/public_config.json"), b"{}").unwrap();
+
+        let def = agent(vec![
+            tmp.join("main").to_string_lossy().to_string(),
+            tmp.join("cfg").to_string_lossy().to_string(),
+        ]);
+
+        let got = preview(&def);
+        assert_eq!(got.len(), 2, "两个存在的目录都该被清理，实际 {got:#?}");
+        assert_eq!(got[0].label, "主数据目录");
+        assert_eq!(got[1].label, "附带目录（多为配置）");
+        assert!(got.iter().all(|i| i.action == "pending"), "都该是待清理");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
     #[cfg(windows)]
     #[test]
     fn preview_skips_junction() {

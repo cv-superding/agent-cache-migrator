@@ -119,7 +119,7 @@ export function purgeAgent(agentId: string, preview = false): Promise<PurgeRepor
     const def = demoData.DEFS.find((d) => d.id === agentId);
     const items: PurgeItem[] = (def?.paths ?? []).map((t, i) => ({
       path: t.replace("%APPDATA%", "C:\\Users\\demo\\AppData\\Roaming").replace("%LOCALAPPDATA%", "C:\\Users\\demo\\AppData\\Local"),
-      label: "数据目录",
+      label: i === 0 ? "主数据目录" : "附带目录（多为配置）",
       bytes: i === 0 ? 3.42 * 1024 ** 3 : 1939,
       files: i === 0 ? 1204 : 2,
       capped: false,

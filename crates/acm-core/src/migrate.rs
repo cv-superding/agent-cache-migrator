@@ -187,6 +187,53 @@ pub fn volume_fs(_root: &Path) -> Option<String> {
     None
 }
 
+/// 迁移落点目录名。
+///
+/// 🔴 主目录用 `<id>`；**同一个 Agent 的其它数据目录必须换一个名字** ——
+/// 否则两个目录都会被复制进 `E:\AgentCache\<id>`：后一个把前一个当「增量目标」，
+/// 两套数据混成一坨，联接也指到同一个地方。豆包就是这个形状：
+/// `%LOCALAPPDATA%\Doubao`（3.8 GB 真数据）和 `%APPDATA%\Doubao`（2 个配置）。
+/// 两个名字都叫 `Doubao`，只能靠父目录区分 → `doubao-Local-Doubao`。
+pub fn dest_dir_name(def: &AgentDef, src: &Path) -> String {
+    let declared: Vec<PathBuf> = def.paths.iter().filter_map(|t| paths::expand(t)).collect();
+    // src 不在声明里（CLI/测试直接给路径）→ 用短名字，别给它编一个后缀
+    let Some(pos) = declared.iter().position(|p| p == src) else {
+        return def.id.clone();
+    };
+    // 「主目录」= 声明里第一个真实存在的；都不存在时按声明顺序的第一个
+    let first = declared
+        .iter()
+        .position(|p| p.symlink_metadata().is_ok())
+        .unwrap_or(0);
+    if pos == first {
+        return def.id.clone();
+    }
+    let name = src
+        .file_name()
+        .map(|n| safe_segment(&n.to_string_lossy()))
+        .unwrap_or_default();
+    match src.parent().and_then(|p| p.file_name()) {
+        Some(parent) => format!("{}-{}-{}", def.id, safe_segment(&parent.to_string_lossy()), name),
+        None => format!("{}-{}", def.id, name),
+    }
+}
+
+/// 目录名里只留文件系统安全的字符（`%LOCALAPPDATA%` 展开后不会有怪字符，
+/// 但配置是可以手写的，别让一个 `/` 把落点带到别的地方去）。
+fn safe_segment(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else if c.is_ascii() {
+                '_'
+            } else {
+                c // 中文/emoji 原样保留（NTFS 完全支持）
+            }
+        })
+        .collect()
+}
+
 /// 生成计划。
 ///
 /// `dest_root` 是「目标根目录」（会拼上 agent id 作为子目录），不是最终目录本身。
@@ -195,9 +242,15 @@ pub fn plan(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<Plan, String
         return Err(format!("源目录不存在：{}", src.display()));
     }
     if fsutil::is_link(src) {
+        // 已经迁过：说清数据在哪，而不是干巴巴一句「不需要再迁」
+        let target = fsutil::link_target(src)
+            .map(|t| t.to_string_lossy().to_string())
+            .unwrap_or_else(|| "?".into());
         return Err(format!(
-            "{} 已经是联接了（已经迁移过），不需要再迁",
-            src.display()
+            "{} 已经是联接（数据在 {}），不需要再迁。\
+             想搬回来用「回滚」，想换个盘先回滚再迁移",
+            src.display(),
+            target
         ));
     }
     let dest = dest_root.join(&def.id);
@@ -245,6 +298,34 @@ pub fn plan(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<Plan, String
     }
     if let Some(w) = cloud_warn {
         warnings.push(w);
+    }
+
+    // ⓪.6 目标体检：目标本身已是联接 → 复制会「写穿」到别人的目录里去
+    //   （联接的根目录 robocopy 是照常进入的，/XJ 只挡源树里的重解析点）。
+    //   这种情况数据根本不会落到这块盘，必须先让用户换个落点或先摘掉联接。
+    if fsutil::is_link(&dest) {
+        let t = fsutil::link_target(&dest)
+            .map(|t| t.to_string_lossy().to_string())
+            .unwrap_or_else(|| "?".into());
+        blockers.push(format!(
+            "目标 {} 已经是一个联接（指向 {}）—— 复制会写进那个目录，数据不会落到这块盘。\
+             请换一个目标根目录，或先把那个联接摘掉",
+            dest.display(),
+            t
+        ));
+    }
+
+    // ⓪.7 同盘迁移：搬完腾不出空间，还白复制一遍
+    let src_root = root_of_volume(src);
+    let dest_root_v = root_of_volume(dest_root);
+    if let (Some(a), Some(b)) = (src_root.as_deref(), dest_root_v.as_deref()) {
+        if a.eq_ignore_ascii_case(b) {
+            warnings.push(format!(
+                "目标和源在同一个盘（{}）—— 搬完腾不出空间，只是多占一份。\
+                 想真正省空间请选另一个盘",
+                a.trim_end_matches('\\')
+            ));
+        }
     }
 
     // ① 谁锁着源目录（精确判断，比按进程名猜可靠）
@@ -654,6 +735,25 @@ fn run_inner(plan: &Plan, cb: &mut dyn FnMut(Progress), opts: RunOptions) -> Mig
         }
     }
 
+    // ①.5 重建源树里的联接（复制阶段的 /XJ 是跳过它们的）
+    let (links, link_problems) = imp::replicate_junctions(&src, &dest);
+    if links > 0 || !link_problems.is_empty() {
+        let detail = if link_problems.is_empty() {
+            format!("按原样重建了 {links} 个联接（运行时目录）")
+        } else {
+            format!(
+                "重建了 {links} 个联接；{} 个没重建：{}",
+                link_problems.len(),
+                link_problems.join("；")
+            )
+        };
+        r.steps.push(StepResult {
+            name: "联接".into(),
+            ok: link_problems.is_empty(),
+            detail,
+        });
+    }
+
     // ② 校验：**必须「还需要复制 0 个」才算过**
     cb(Progress {
         step: "verifying".into(),
@@ -1045,7 +1145,7 @@ pub fn env_relocate_apply(
 /// 防御：候选目标必须是**有内容的真实目录**（防止把空目录/另一个链接当数据）；
 /// 应用在跑时拒绝修复（重建瞬间句柄会断）。
 pub fn repair(def: &AgentDef, src: &Path, dest_root: &Path) -> Result<RepairReport, String> {
-    let dest = dest_root.join(&def.id);
+    let dest = dest_root.join(dest_dir_name(def, src));
     let mk = |action: &str, detail: String| RepairReport {
         ok: true,
         agent_id: def.id.clone(),
@@ -1259,9 +1359,25 @@ fn validate_snapshot_path(snapshot: &Path, defs: &[AgentDef]) -> Result<(), Stri
 
 // ============================================================ 内部工具（跨平台）
 
+/// 路径所在卷的根（`C:\`）。
+///
+/// 非 Windows 返回 `None` —— unix 的挂载点可嵌套，判断「是不是同一个盘」
+/// 容易误伤；这条只是提醒，宁可不提醒也不瞎提醒。
+#[cfg(windows)]
+fn root_of_volume(p: &Path) -> Option<String> {
+    let s = p.to_string_lossy().replace('/', "\\");
+    let i = s.find(":\\")?;
+    Some(s[..i + 2].to_string())
+}
+
+/// 见 Windows 版说明。
+#[cfg(not(windows))]
+fn root_of_volume(_p: &Path) -> Option<String> {
+    None
+}
+
 /// `p` 是否在 `root` 里面（含相等）。
-fn path_starts_with(p: &Path, root: &Path) -> bool {
-    let a = norm_for_compare(p);
+fn path_starts_with(p: &Path, root: &Path) -> bool {    let a = norm_for_compare(p);
     let b = norm_for_compare(root);
     a == b || a.starts_with(&format!("{b}\\"))
 }
@@ -1333,6 +1449,12 @@ mod imp {
             .output()
     }
 
+    /// 复制阶段与校验阶段共用的排除项：系统回收站 / 卷影信息目录。
+    ///
+    /// 正常不会出现在用户目录里，但源根真被配成盘符时（或用户手工塞过），
+    /// 复制它们既没意义、还会让「0 差异」的收敛判定被权限错误干扰。
+    const ROBO_EXCLUDE_DIRS: [&str; 2] = ["$RECYCLE.BIN", "System Volume Information"];
+
     /// 共用的 robocopy 参数：不重试、不等待、跳过重解析点。
     const ROBO_SAFE: [&str; 5] = ["/E", "/COPY:DAT", "/DCOPY:DAT", "/R:0", "/W:0"];
 
@@ -1367,6 +1489,10 @@ mod imp {
             "/NJS".to_string(),
             "/NP".to_string(),
         ]);
+        for d in ROBO_EXCLUDE_DIRS {
+            args.push("/XD".to_string());
+            args.push(d.to_string());
+        }
 
         // 日志落盘（best-effort：建不了目录就不留档，不影响复制本身）
         if let Some(log_dir) =
@@ -1456,6 +1582,10 @@ mod imp {
         args.extend_from_slice(&ROBO_EXTRA);
         // /L = 只列不复制；/NS /NC 只留路径
         args.extend_from_slice(&["/L", "/NS", "/NC", "/NDL", "/NJH", "/NJS", "/NP"]);
+        for dir in ROBO_EXCLUDE_DIRS {
+            args.push("/XD");
+            args.push(dir);
+        }
 
         let out = run("robocopy", &args).map_err(|e| format!("调不起 robocopy：{e}"))?;
         let text = String::from_utf8_lossy(&out.stdout);
@@ -1576,20 +1706,67 @@ mod imp {
     /// 穿过联接读一次，确认应用真的能用。
     ///
     /// 只「联接建成了」不够 —— 如果目标盘掉线或权限不对，联接照样「存在」但读不出东西。
-    pub fn verify_through_link(link: &Path, dest: &Path) -> Result<usize, String> {
+    ///
+    /// 🔴 两边都是 0 个条目**不是错误**：源目录本来就可能是空的（刚装好没跑过的应用），
+    /// 复制校验（`pending_count == 0`）已经保证「该搬的都搬了」。
+    /// 早先这里报「疑似目标目录没内容」→ 空目录迁移被误判失败并回滚。
+    pub fn verify_through_link(link: &Path, _dest: &Path) -> Result<usize, String> {
         let n = std::fs::read_dir(link)
             .map_err(|e| format!("穿过联接读 {} 失败：{e}", link.display()))?
             .flatten()
             .count();
-        if n == 0 {
-            let d = std::fs::read_dir(dest)
-                .map(|r| r.flatten().count())
-                .unwrap_or(0);
-            if d == 0 {
-                return Err("联接建成但两边都是空的 —— 疑似目标目录没内容".to_string());
+        Ok(n)
+    }
+
+    /// 把源树里的联接/符号链接在目标树里**按原样重建**。
+    ///
+    /// 🔴 复制阶段带了 `/XJ`（不跟进重解析点），所以这些链接在目标里根本不存在。
+    /// 对 WorkBuddy 这类应用来说，`binaries/python/versions/*` 往往是指向共享运行时的
+    /// 联接 —— 搬完之后链接凭空消失，应用就找不到 Python 了。
+    ///
+    /// 返回 (重建个数, 没重建的说明)。**失败不推翻迁移**：复制已经成功，
+    /// 缺链接最多是应用要重装运行时，比整次迁移回滚轻得多。
+    pub fn replicate_junctions(src: &Path, dst: &Path) -> (u64, Vec<String>) {
+        let mut done = 0u64;
+        let mut problems = Vec::new();
+        let mut stack = vec![src.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if fsutil::is_link(&p) {
+                    let Ok(rel) = p.strip_prefix(src) else { continue };
+                    let to = dst.join(rel);
+                    match fsutil::link_target(&p) {
+                        Some(t) if t.is_dir() => {
+                            if to.symlink_metadata().is_ok() {
+                                continue; // 目标里已经有一份（重跑/续传），不覆盖
+                            }
+                            if let Some(parent) = to.parent() {
+                                let _ = std::fs::create_dir_all(parent);
+                            }
+                            match make_junction(&to, &t) {
+                                Ok(()) => done += 1,
+                                Err(e) => problems.push(format!("{}：{e}", rel.display())),
+                            }
+                        }
+                        Some(_) => problems.push(format!(
+                            "{} 指向的不是目录，未重建（文件链接很少见，请手工确认）",
+                            rel.display()
+                        )),
+                        None => problems.push(format!(
+                            "{} 是断链，未重建（目标已不存在）",
+                            rel.display()
+                        )),
+                    }
+                    continue; // 绝不跟进去
+                }
+                stack.push(p);
             }
         }
-        Ok(n)
+        (done, problems)
     }
 
     /// 移入回收站（**可还原**，不是彻底删除）。
@@ -1606,6 +1783,13 @@ mod imp {
     pub fn remove_dir_forced(root: &Path) -> Result<u64, String> {
         if !root.exists() {
             return Ok(0);
+        }
+        // 🔴 root 自己就是联接时**只摘链接**，绝不递归进去：
+        //    `icacls /T` 会沿着联接把目标盘的整棵子树 ACL 全 reset 掉
+        //    （那可能是应用正在用的真实数据），`remove_dir_all` 虽然只删链接、
+        //    但前面那一步已经造成破坏。先分类再动手。
+        if fsutil::is_link(root) {
+            return remove_junction(root).map(|()| 0);
         }
         // 先量体积 —— 删完就量不到了。`measure` 不跟随重解析点，
         // 所以联接指向的别处数据不会被算进来（那些也不该被删）。
@@ -1655,6 +1839,47 @@ mod imp {
 
             // 🔴 目标盘路径必须被排除（这是「迁移永远失败」的真凶）
             assert!(!is_under_root(r"F:\.AgentCache\codex\a.txt", root));
+        }
+
+        /// 复制阶段 `/XJ` 会跳过源树里的联接 —— 迁移后必须在目标里**按原样重建**，
+        /// 否则 WorkBuddy 那种 `binaries/python/versions/*` 运行时链接会凭空消失。
+        #[test]
+        fn replicate_junctions_recreates_links_in_dest() {
+            let base = scratch("repl");
+            let src = base.join("src");
+            let dst = base.join("dst");
+            let outside = base.join("outside");
+            std::fs::create_dir_all(src.join("sub")).unwrap();
+            std::fs::create_dir_all(&outside).unwrap();
+            std::fs::write(outside.join("keep.txt"), b"x").unwrap();
+
+            let link = src.join("sub").join("rt");
+            let st = std::process::Command::new("cmd")
+                .args([
+                    "/C",
+                    "mklink",
+                    "/J",
+                    &link.to_string_lossy(),
+                    &outside.to_string_lossy(),
+                ])
+                .status();
+            if !matches!(st, Ok(s) if s.success()) {
+                return; // 建不出联接就跳过（权限/文件系统限制）
+            }
+
+            // 模拟「复制阶段 /XJ 跳过了它」：目标里只有目录骨架
+            std::fs::create_dir_all(dst.join("sub")).unwrap();
+
+            let (n, problems) = replicate_junctions(&src, &dst);
+            assert_eq!(n, 1, "该重建 1 个联接：{problems:?}");
+            assert!(
+                dst.join("sub").join("rt").join("keep.txt").exists(),
+                "重建后应当能穿过联接读到原来的数据"
+            );
+
+            let _ = std::fs::remove_dir(dst.join("sub").join("rt"));
+            let _ = std::fs::remove_dir(&link);
+            let _ = std::fs::remove_dir_all(&base);
         }
 
         #[test]
@@ -1953,7 +2178,7 @@ mod imp {
     /// 穿过链接读一次，确认应用真的能用。
     ///
     /// 只「链接建成了」不够 —— 目标盘掉线或权限不对时，链接照样「存在」但读不出东西。
-    pub fn verify_through_link(link: &Path, dest: &Path) -> Result<usize, String> {
+    pub fn verify_through_link(link: &Path, _dest: &Path) -> Result<usize, String> {
         let md = std::fs::symlink_metadata(link)
             .map_err(|e| format!("读不到 {}：{e}", link.display()))?;
         if !md.file_type().is_symlink() {
@@ -1963,15 +2188,14 @@ mod imp {
             .map_err(|e| format!("穿过链接读 {} 失败：{e}", link.display()))?
             .flatten()
             .count();
-        if n == 0 {
-            let d = std::fs::read_dir(dest)
-                .map(|r| r.flatten().count())
-                .unwrap_or(0);
-            if d == 0 {
-                return Err("链接建成但两边都是空的 —— 疑似目标目录没内容".to_string());
-            }
-        }
+        // 空源目录迁过来也是 0 个条目，这是合法的（见 Windows 版说明）
         Ok(n)
+    }
+
+    /// unix 上复制会跟随/重建符号链接的方式不同（`cp -R` 会保留链接本体），
+    /// 这里不需要额外补链接 —— 直接返回空结果。
+    pub fn replicate_junctions(_src: &Path, _dst: &Path) -> (u64, Vec<String>) {
+        (0, Vec::new())
     }
 
     /// 永久删除一个目录树（先量体积再删）。unix 上不需要解 ACL。
@@ -2167,6 +2391,9 @@ mod imp {
     }
     pub fn verify_through_link(_link: &Path, _dest: &Path) -> Result<usize, String> {
         Err(MSG.to_string())
+    }
+    pub fn replicate_junctions(_src: &Path, _dst: &Path) -> (u64, Vec<String>) {
+        (0, Vec::new())
     }
     pub fn remove_dir_forced(_root: &Path) -> Result<u64, String> {
         Err(MSG.to_string())
@@ -2721,6 +2948,47 @@ env = "AC_TEST_ROLLBACK_VAR"
         assert!(dest.join("data.bin").exists(), "目标盘数据不应被破坏");
 
         let _ = crate::envvar::remove(var);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 🔴 多目录 Agent：两个目录不能都落到 `dest_root/<id>`，否则两套数据混在一起。
+    ///
+    /// 豆包就是 `Local\Doubao`（真数据）+ `Roaming\Doubao`（配置），连目录名都一样。
+    #[test]
+    fn dest_dir_name_disambiguates_secondary_paths() {
+        let base = std::env::temp_dir().join(format!("acm-destname-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let local = base.join("Local").join("Doubao");
+        let roaming = base.join("Roaming").join("Doubao");
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::create_dir_all(&roaming).unwrap();
+
+        let def = AgentDef {
+            id: "doubao".into(),
+            name: "豆包".into(),
+            vendor: None,
+            kind: "electron".into(),
+            class: "normal".into(),
+            category: "agent".into(),
+            paths: vec![
+                local.to_string_lossy().to_string(),
+                roaming.to_string_lossy().to_string(),
+            ],
+            updater: Vec::new(),
+            env_relocate: None,
+            processes: Vec::new(),
+            skip: Vec::new(),
+            runtime_links: Vec::new(),
+            note: None,
+            install: None,
+        };
+
+        assert_eq!(dest_dir_name(&def, &local), "doubao", "主目录还是短名字");
+        let second = dest_dir_name(&def, &roaming);
+        assert_ne!(second, "doubao", "第二个目录必须换个名字，不能覆盖主目录的落点");
+        assert!(second.starts_with("doubao-"), "实际是 {second}");
+        assert!(second.contains("Doubao"), "应当能认出是哪个目录：{second}");
+
         let _ = std::fs::remove_dir_all(&base);
     }
 
