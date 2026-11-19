@@ -7,7 +7,7 @@
 ![Rust](https://img.shields.io/badge/Rust-1.85%2B-000000?logo=rust)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri)
 
-把各种 AI Agent（WorkBuddy / Codex / Claude Code / Cursor / CodeBuddy / ZCode / DeepSeek / Trae …）
+把各种 AI Agent（WorkBuddy / Codex / Claude Code / Cursor / CodeBuddy / ZCode / DeepSeek Harness / Trae …）
 的数据目录**迁到别的盘**，腾出系统盘空间。
 
 做法是在原路径留一个**重定向点**：原路径原地不动、对应用完全透明，实际文件落到目标盘。
@@ -92,6 +92,7 @@ skip      = ["**/node_modules"]       # 可选：这些不进校验
 |---|---|---|
 | **搬目录 + 建重定向点**（默认） | ✅ 已实现 | 原路径留一个重定向点，对应用透明，**不需要管理员权限** |
 | **改环境变量** | ✅ 已实现 | `acm env <id> [--dest <根>]` 自动设置 Agent 官方声明的重定位变量（Windows 写用户级注册表并广播生效；重启应用后生效），`--unset` 恢复默认路径。仅限配了 `env_relocate` 的 Agent；**同一程序多版本共用一个变量会互相踩数据**（如 WorkBuddy 双版本故意不提供），这类只能用联接 |
+| **清理缓存（卸载残留）** | ✅ 已实现 | `acm purge <id> [--yes]` / 界面「清理缓存」：把该 Agent 的数据目录 + 更新器目录**整体移入回收站**，清完重扫就落回「未安装」。只动 `agents.toml` 声明过的路径、悬挂/已迁移的联接一律跳过、有进程在跑先拒绝 |
 
 ### 各平台用的机制
 
@@ -190,9 +191,9 @@ skip      = ["**/node_modules"]       # 可选：这些不进校验
 | CodeBuddy 国内版 | `%APPDATA%\CodeBuddy CN` | ⚠️ |
 | Trae CN | `%APPDATA%\Trae CN` | ⚠️ |
 | ZCode | `%APPDATA%\ZCode` | ⚠️ |
-| DeepSeek | `%APPDATA%\@deepseek-ai` | ✅ |
+| DeepSeek Harness | `%APPDATA%\@deepseek-ai` | ✅ |
 | Cherry Studio | `%APPDATA%\CherryStudio` | ✅ |
-| 豆包 | `%APPDATA%\Doubao` | ⚠️ |
+| 豆包 | `%LOCALAPPDATA%\Doubao` · `%APPDATA%\Doubao` | ✅ |
 | Windsurf | `%APPDATA%\Windsurf` | ⚠️ |
 | CodeBuddy 国际版 | `%APPDATA%\CodeBuddy` | ⚠️ |
 | Trae 国际版 | `%APPDATA%\Trae` | ⚠️ |
@@ -256,6 +257,7 @@ acm migrate codex --dest D:\AgentCache --yes   # 执行迁移（多目录 Agent 
                                # --verify-hash：校验阶段逐文件 SHA-256（更严但慢）
 acm rollback codex         # 回滚：快照改回原位（迁移后新数据先备份到恢复目录）
 acm repair codex           # 修复：目标数据还在但链接坏了，只重建链接
+acm purge utools           # 清理缓存：数据目录 / 更新器目录移入回收站（卸载残留 → 未安装）
 acm doctor                 # 体检：断链 / 运行中 / 快照脏状态 / 孤儿快照 + 修复命令
 acm snapshots              # 列出迁移快照（可回滚的那份）
 acm history                # 迁移历史（何时对哪个目录做过什么）

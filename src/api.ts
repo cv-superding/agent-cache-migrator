@@ -18,6 +18,8 @@ import type {
   MigrateReport,
   Plan,
   Progress,
+  PurgeItem,
+  PurgeReport,
   Snapshot,
 } from "./types";
 
@@ -105,6 +107,33 @@ export function repair(
     });
   }
   return invoke("repair", { agentId, destRoot });
+}
+
+/** 清理缓存：把该 Agent 的数据目录 / 更新器目录整体移入回收站。
+ *
+ * `preview = true` 时只列清单不动文件（确认框里展示用）。
+ */
+export function purgeAgent(agentId: string, preview = false): Promise<PurgeReport> {
+  if (DEMO) {
+    const def = demoData.DEFS.find((d) => d.id === agentId);
+    const items: PurgeItem[] = (def?.paths ?? []).map((t, i) => ({
+      path: t.replace("%APPDATA%", "C:\\Users\\demo\\AppData\\Roaming").replace("%LOCALAPPDATA%", "C:\\Users\\demo\\AppData\\Local"),
+      label: "数据目录",
+      bytes: i === 0 ? 3.42 * 1024 ** 3 : 1939,
+      files: i === 0 ? 1204 : 2,
+      capped: false,
+      action: preview ? "pending" : "trashed",
+      note: null,
+    }));
+    return Promise.resolve({
+      ok: true,
+      items,
+      freed: preview ? 0 : items.reduce((s, it) => s + it.bytes, 0),
+      freedText: preview ? "" : "3.42 GB",
+      problems: [],
+    });
+  }
+  return invoke("purge_agent", { agentId, preview });
 }
 
 export function cancelMigrate(): Promise<void> {
@@ -199,6 +228,7 @@ export const api = {
   rollback,
   repair,
   setEnv,
+  purgeAgent,
   snapshots,
   history,
   deleteSnapshot,

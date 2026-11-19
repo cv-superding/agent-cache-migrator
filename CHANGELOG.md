@@ -4,6 +4,16 @@
 
 ## [未发布]
 
+### 新增
+
+- **清理缓存（卸载残留）**：状态卡片底部新增「清理缓存」——把该 Agent 的**数据目录 / 更新器目录整体移入系统回收站**，清完重扫就落回「未安装」。典型场景：应用早就卸了，`%APPDATA%\Xxx` 还留着几百 MB。点之前先弹确认框，逐条列出将被清理的路径与体积（只读预览，`purge_agent` 的 `preview` 模式）。内核 `acm_core::purge` 守住三条：只动 `agents.toml` 声明过的路径；**联接一律跳过**（背后是真数据，先回滚再清）；有进程在跑先拒绝。回收站可还原，空间清空回收站才真正释放。CLI 同步 `acm purge <id> [--yes] [--json]`。
+- **CLI `acm purge`**（同上，`--json` 出报告给脚本用）。
+
+### 修正
+
+- **豆包体积显示成 1.89 KB**：`agents.toml` 里 `doubao` 只写了 `%APPDATA%/Doubao`，而那里只有一个 2 KB 的 `public_config.json`；真正的 Chromium 数据（`Application` + `User Data`，GB 级）在 `%LOCALAPPDATA%/Doubao`。补上该路径后本机实测从 1.89 KB → 3.75 GB / 37,636 文件。
+- **`DeepSeek` 其实叫 DeepSeek Harness**：注册表条目 `name` 改成 `DeepSeek Harness`（DSH），`processes` 从 `DeepSeek*.exe` 校准为 `DeepSeek Harness.exe / DeepSeekHarness.exe`，并补上「数据目录带 `@` 前缀、装完没启动过时只有更新器目录」的提示。
+
 ### 变更（界面）
 
 - **每个 Agent 换成真实图标**：侧栏、标题、快照表、迁移历史里的图标不再是「名字首字母色块」—— 桌面应用用其官方应用图标（WorkBuddy / CodeBuddy / ZCode / 豆包 / 飞书 / Cherry Studio / Chatbox / uTools / 通义灵码 / OpenAI），编程类 Agent 用官方矢量标志（Claude / Cursor / Trae / DeepSeek / Gemini / LM Studio / Ollama / Windsurf / npm）。图标随安装包打包，离线可用；`agents.toml` 里自己加的 Agent 仍走首字母徽章兜底。

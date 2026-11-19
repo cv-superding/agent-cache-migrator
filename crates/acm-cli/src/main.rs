@@ -20,6 +20,8 @@ acm —— AgentCache 命令行
   acm rollback <id> [--yes]  回滚：把快照改回原位（迁移后新数据会先备份到恢复目录）
   acm repair <id> [选项]     修复：目标数据还在但链接坏了/丢了，只重建链接不复制数据
   acm env <id> [选项]        设置/删除 Agent 官方支持的重定位环境变量（仅限配了 env_relocate 的）
+  acm purge <id> [--yes]     清理缓存：把数据目录 / 更新器目录整体移入回收站
+                            （卸载残留、想把应用重置回干净状态时用；联接会跳过）
   acm snapshots              列出所有迁移快照（原目录改名保留的那份）
   acm history [--all]        查看迁移历史（最近 20 条，--all 全部）
   acm doctor [--json]        体检：断链 / 运行中 / 快照脏状态 / 孤儿快照，附修复命令
@@ -56,6 +58,11 @@ env 选项:
   --unset                删除该变量（恢复应用默认路径）
   --yes                  跳过交互确认
   --config <路径>        同上
+
+purge 选项:
+  --yes                  跳过交互确认
+  --json                 输出 JSON 报告
+  --config <路径>        同上
 ";
 
 fn main() -> ExitCode {
@@ -70,6 +77,7 @@ fn main() -> ExitCode {
         "rollback" => cmd_rollback(&args[1..]),
         "repair" => cmd_repair(&args[1..]),
         "env" => cmd_env(&args[1..]),
+        "purge" => cmd_purge(&args[1..]),
         "snapshots" => cmd_snapshots(&args[1..]),
         "history" => cmd_history(&args[1..]),
         "doctor" => cmd_doctor(&args[1..]),
@@ -652,6 +660,93 @@ fn cmd_env(args: &[String]) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------- snapshots
+
+// ---------------------------------------------------------------- purge
+
+/// 清理缓存：把该 Agent 的数据目录 / 更新器目录整体移入回收站。
+///
+/// 典型用途：应用早卸载了，`%APPDATA%\Xxx` 还留着几百 MB 残留 —— 清完再
+/// `acm detect` 一次，它就回到「未安装」。
+fn cmd_purge(args: &[String]) -> Result<(), String> {
+    let usage = "用法：acm purge <agent-id> [--yes] [--json] [--config <路径>]";
+    let yes = args.iter().any(|a| a == "--yes");
+    let json = args.iter().any(|a| a == "--json");
+    let id = positional(args, usage)?;
+    let cfg = flag_path(args, "--config");
+    let defs = agents::load(cfg.as_deref())?;
+    let def = defs
+        .iter()
+        .find(|d| d.id == id)
+        .ok_or_else(|| format!("注册表里没有 id = {id}"))?;
+
+    let items = acm_core::purge::preview(def);
+    if items.is_empty() {
+        println!("{} 没有可清理的目录（可能已经清过了）。", def.name);
+        return Ok(());
+    }
+
+    println!("将要移入回收站的目录：");
+    let mut total = 0u64;
+    for it in &items {
+        let tag = if it.action == "skip" { "（跳过）" } else { "" };
+        println!(
+            "  {:<10} {:>12} {:>8} 文件  {}{}",
+            it.label,
+            fsutil::human(it.bytes),
+            it.files,
+            it.path,
+            tag
+        );
+        if let Some(n) = &it.note {
+            println!("      ⚠ {n}");
+        }
+        if it.action != "skip" {
+            total += it.bytes;
+        }
+    }
+
+    if !confirm(
+        &format!(
+            "确认把这 {} 个目录（合计 {}）移入回收站？\n⚠ 应用会被重置：登录状态、聊天记录、配置都在里面。\n⚠ 空间要先清空回收站才真正释放。",
+            items.iter().filter(|i| i.action != "skip").count(),
+            fsutil::human(total)
+        ),
+        yes,
+    )? {
+        println!("已取消。");
+        return Ok(());
+    }
+
+    let rep = acm_core::purge::run(def)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rep).map_err(|e| e.to_string())?
+        );
+    } else {
+        for it in &rep.items {
+            let mark = match it.action.as_str() {
+                "trashed" => "✓",
+                "skip" => "·",
+                "failed" => "✗",
+                _ => "?",
+            };
+            println!("{mark} {:<10} {} {}", it.label, it.path, it.action);
+        }
+        println!(
+            "{}",
+            if rep.ok {
+                format!("完成：{} 移入回收站（清空回收站后释放）。", rep.freed_text)
+            } else {
+                "部分失败 —— 见上面 ✗ 行。".to_string()
+            }
+        );
+    }
+    if !rep.ok {
+        return Err("有目录没能清理".into());
+    }
+    Ok(())
+}
 
 fn cmd_snapshots(args: &[String]) -> Result<(), String> {
     let cfg = flag_path(args, "--config");

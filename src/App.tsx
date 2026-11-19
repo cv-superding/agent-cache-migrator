@@ -8,6 +8,7 @@ import type {
   MigrateReport,
   Plan,
   Progress,
+  PurgeItem,
   Snapshot,
 } from "./types";
 import { agentState, human } from "./types";
@@ -48,6 +49,7 @@ export default function App() {
   const [rolling, setRolling] = useState(false);
   const [repairing, setRepairing] = useState(false);
   const [settingEnv, setSettingEnv] = useState(false);
+  const [purging, setPurging] = useState(false);
   /** 迁移成功后顺带设置官方重定位环境变量（联接 + 变量双保险）。 */
   const [withEnv, setWithEnv] = useState(false);
   const [history, setHistory] = useState<{
@@ -257,6 +259,90 @@ export default function App() {
     }
   }
 
+  /** 清理缓存 —— 先取「将被清理」的清单（只读），确认后再动手。 */
+  async function askPurge(id: string) {
+    const a = agents.find((x) => x.id === id);
+    if (a && a.running.length > 0) {
+      toast(t("purgeRunning"), a.running.join(", "), true);
+      return;
+    }
+
+    let items: PurgeItem[] = [];
+    try {
+      items = (await api.purgeAgent(id, true)).items;
+    } catch (e) {
+      toast(t("toastPurgeFailed"), String(e), true);
+      return;
+    }
+    if (items.length === 0) {
+      toast(t("purgeNothing"), id, true);
+      return;
+    }
+
+    const live = items.filter((i) => i.action !== "skip");
+    const total = live.reduce((s, i) => s + i.bytes, 0);
+
+    setConfirm({
+      title: t("purgeTitle"),
+      okText: t("purgeOk"),
+      danger: true,
+      body: (
+        <>
+          <div className="rows">
+            {items.map((i) => (
+              <Row
+                key={i.path}
+                k={i.label}
+                v={
+                  <>
+                    <span className="mono">{i.path}</span>
+                    {i.action === "skip" ? (
+                      <span className="badge b-gray">{t("purgeSkipTag")}</span>
+                    ) : (
+                      <span className="badge b-warn">{human(i.bytes)}</span>
+                    )}
+                    {i.note && (
+                      <div style={{ color: "var(--muted)", marginTop: 2 }}>{i.note}</div>
+                    )}
+                  </>
+                }
+              />
+            ))}
+          </div>
+          {live.length > 0 && (
+            <div className="note warn" style={{ marginTop: 10 }}>
+              <b>{t("purgeTotal", { size: human(total) })}</b>
+              <div style={{ marginTop: 4 }}>{t("purgeWarn")}</div>
+            </div>
+          )}
+        </>
+      ),
+      onOk: () => void doPurge(id),
+    });
+  }
+
+  async function doPurge(id: string) {
+    setPurging(true);
+    try {
+      const r = await api.purgeAgent(id);
+      toast(
+        t("toastPurged"),
+        r.ok
+          ? `${r.freedText} → 回收站` + (r.problems.length ? `（${r.problems.length} 项跳过）` : "")
+          : r.problems.join("；"),
+        !r.ok,
+      );
+      // 清完必须重扫：目录没了 → detected=false → 落回「未安装」
+      await refreshAgents(true);
+      await refreshDrives();
+      await refreshHistory(allHistory);
+    } catch (e) {
+      toast(t("toastPurgeFailed"), String(e), true);
+    } finally {
+      setPurging(false);
+    }
+  }
+
   /** 用环境变量重定位（官方支持的 Agent 才有此入口）。 */
   async function doSetEnv(id: string) {
     setSettingEnv(true);
@@ -362,6 +448,8 @@ export default function App() {
                 a={cur}
                 repairing={repairing}
                 settingEnv={settingEnv}
+                purging={purging}
+                onPurge={(id) => void askPurge(id)}
                 onRepair={(id) => {
                   const a = agents.find((x) => x.id === id);
                   setConfirm({
@@ -592,12 +680,16 @@ function StatusCard({
   repairing,
   settingEnv,
   onSetEnv,
+  purging,
+  onPurge,
 }: {
   a: DetectedAgent;
   onRepair?: (id: string) => void;
   repairing?: boolean;
   settingEnv?: boolean;
   onSetEnv?: (id: string) => void;
+  purging?: boolean;
+  onPurge?: (id: string) => void;
 }) {
   const st = agentState(a);
   const shown = a.paths.filter((p) => p.kind !== "missing");
@@ -700,6 +792,22 @@ function StatusCard({
       {st === "absent" && (
         <div className="note info" style={{ marginTop: 11 }}>
           {t("absentNote")}
+        </div>
+      )}
+
+      {/* 清理缓存 —— 卸载残留清完就落回「未安装」 */}
+      {a.detected && onPurge && (
+        <div className="purgebar">
+          <span className="hint">
+            {a.running.length > 0 ? t("purgeRunning") : t("purgeHint")}
+          </span>
+          <button
+            className="btn dangerghost"
+            disabled={!!purging || a.running.length > 0}
+            onClick={() => onPurge(a.id)}
+          >
+            {purging ? t("purging") : t("purgeBtn")}
+          </button>
         </div>
       )}
     </Card>

@@ -142,6 +142,28 @@ export interface Snapshot {
   measure: Measure;
 }
 
+/** 一个「将被清理」的目录（清理缓存预览 / 报告的一项）。 */
+export interface PurgeItem {
+  path: string;
+  /** 数据目录 | 更新器目录 */
+  label: string;
+  bytes: number;
+  files: number;
+  capped: boolean;
+  /** pending（将被清理）| trashed（已移入回收站）| skip（不动）| failed */
+  action: string;
+  note: string | null;
+}
+
+/** 清理缓存的结果。`freed` 是移入回收站的字节数 —— 清空回收站才真正释放。 */
+export interface PurgeReport {
+  ok: boolean;
+  items: PurgeItem[];
+  freed: number;
+  freedText: string;
+  problems: string[];
+}
+
 /** 迁移状态的展示口径（与 Rust `DetectedAgent::state()` 一致）。 */
 export type AgentState = "moved" | "free" | "absent";
 

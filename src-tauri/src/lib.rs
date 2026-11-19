@@ -245,6 +245,37 @@ async fn env_set(
     .map_err(|e| format!("设置环境变量异常：{e}"))?
 }
 
+/// 清理某个 Agent 的缓存目录（移入回收站）。
+///
+/// 用在「应用早卸载了但残留还占着空间」的场景 —— 清完再扫一次，它就落到未安装。
+/// `preview = true` 时只列清单不动文件（确认框用）。
+#[tauri::command]
+async fn purge_agent(agent_id: String, preview: Option<bool>) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if preview.unwrap_or(false) {
+            let defs = agents::load(None)?;
+            let def = defs
+                .iter()
+                .find(|d| d.id == agent_id)
+                .ok_or_else(|| format!("注册表里没有 id = {agent_id}"))?;
+            let items = acm_core::purge::preview(def);
+            serde_json::to_value(serde_json::json!({
+                "ok": true,
+                "items": items,
+                "freed": 0,
+                "freedText": "",
+                "problems": [],
+            }))
+            .map_err(|e| e.to_string())
+        } else {
+            let rep = acm_core::purge::purge_by_id(&agent_id)?;
+            serde_json::to_value(rep).map_err(|e| e.to_string())
+        }
+    })
+    .await
+    .map_err(|e| format!("清理任务异常：{e}"))?
+}
+
 /// 迁移历史（`history.jsonl`，新的在前；默认最近 15 条）。
 #[tauri::command]
 async fn history(all: Option<bool>) -> Result<Value, String> {
@@ -372,6 +403,7 @@ pub fn run() {
             snapshots,
             history,
             env_set,
+            purge_agent,
             delete_snapshot,
             open_path,
             version,

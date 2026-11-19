@@ -9,6 +9,7 @@
 //! - [`locks`] —— **精确占用检测**（Windows Restart Manager：谁锁着这个目录）
 //! - [`procs`] —— 进程探测（按名字匹配，作为兜底）
 //! - [`migrate`] —— **迁移内核**：复制 → 校验 → 快照 → 建联接 → 验证（含回滚）
+//! - [`purge`] —— **清理缓存**：把卸载残留 / 想重置的数据目录移入回收站
 //! - [`syscmd`] —— 子进程的**统一入口**（Windows 上关掉子进程控制台窗口）
 //!
 //! 设计原则：**内核不认识任何具体 Agent**。所有 Agent 知识都在 `agents.toml` 里，
@@ -25,6 +26,7 @@ pub mod migrate;
 pub mod model;
 pub mod paths;
 pub mod procs;
+pub mod purge;
 pub mod syscmd;
 
 pub use agents::{detect, detect_all, detect_with, load, parse, DetectOpts, BUILTIN_TOML};

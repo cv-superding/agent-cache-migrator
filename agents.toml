@@ -157,12 +157,14 @@ processes = ["ZCode.exe"]
 
 [[agent]]
 id       = "deepseek"
-name     = "DeepSeek"
+name     = "DeepSeek Harness"
+vendor   = "DeepSeek"
 kind     = "electron"
 class    = "normal"
-paths    = ["%APPDATA%/@deepseek-ai"]   # 注意：带 @ 前缀
+paths    = ["%APPDATA%/@deepseek-ai"]   # 注意：带 @ 前缀；里面是 dsh-desktop
 updater  = ["@deepseek-aidsh-desktop-updater"]
-processes = ["DeepSeek*.exe"]
+processes = ["DeepSeek Harness.exe", "DeepSeekHarness.exe"]
+note     = "产品名是 DeepSeek Harness（DSH），不是 DeepSeek 网页版客户端；数据目录名带 @ 前缀。装完没启动过时只有更新器目录。"
 
 [[agent]]
 id       = "doubao"
@@ -170,8 +172,12 @@ name     = "豆包"
 vendor   = "字节跳动"
 kind     = "electron"
 class    = "normal"
-paths    = ["%APPDATA%/Doubao"]
+# 🔴 真机实测：豆包的 Chromium 数据（Application + User Data，GB 级）在
+#    %LOCALAPPDATA%\Doubao，%APPDATA%\Doubao 里只有一个 2KB 的
+#    public_config.json —— 只写前者会让界面上显示成「1.89 KB」。
+paths    = ["%LOCALAPPDATA%/Doubao", "%APPDATA%/Doubao"]
 processes = ["Doubao.exe"]
+note     = "大头在 LocalAppData 的 User Data；Roaming 下那个只有配置。迁移只搬第一个存在的目录。"
 
 
 [[agent]]

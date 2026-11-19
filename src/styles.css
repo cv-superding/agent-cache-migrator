@@ -652,6 +652,35 @@ input[type="text"]:focus {
   box-shadow: none;
 }
 
+/* 危险但非主操作（清理缓存）：红字白底，不抢主按钮的注意力 */
+.btn.dangerghost {
+  color: #b3261e;
+  border-color: #f0cdcb;
+  background: #fff;
+}
+.btn.dangerghost:hover {
+  background: #fff6f6;
+  border-color: #e2aaa7;
+}
+
+/* 状态卡片底部的「清理缓存」条：一条虚线分隔，左说明右按钮 */
+.purgebar {
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px dashed #e3e8ef;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.purgebar .hint {
+  flex: 1 1 220px;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
 /* ---------- 提示块 ---------- */
 .note {
   border-radius: 10px;
