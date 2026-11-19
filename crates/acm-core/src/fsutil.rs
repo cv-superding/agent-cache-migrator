@@ -129,6 +129,14 @@ pub fn measure(root: &Path, cap_files: u64, cap: Duration) -> Measure {
     m
 }
 
+/// 精确统计（不设上限，也不设超时）：给「列表里的数字是下限、我想要准数」的用户。
+///
+/// 代价是慢 —— 几十万文件要几十秒到几分钟，调用方必须放到后台线程里跑，
+/// 并且让界面显示「正在统计…」，别让用户以为卡死了。
+pub fn measure_exact(root: &Path) -> Measure {
+    measure(root, u64::MAX, Duration::from_secs(3600))
+}
+
 /// 人类可读的体积。
 pub fn human(bytes: u64) -> String {
     const U: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];

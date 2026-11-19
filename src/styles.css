@@ -157,7 +157,9 @@ code {
   overflow: auto;
   flex: 1;
   min-height: 0;
-  padding-right: 2px;
+  padding-right: 8px;
+  /* 保住滚动条的位置 —— 否则滚动条会盖在右侧的体积数字上，把「GB」切掉一半 */
+  scrollbar-gutter: stable;
 }
 .item {
   position: relative;
@@ -209,7 +211,11 @@ code {
   color: var(--faint);
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
-  flex: none;
+  flex: 0 0 auto;
+  max-width: 84px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-align: right;
 }
 .item.off {
   opacity: 0.5;
@@ -461,6 +467,14 @@ code {
 }
 
 /* ---------- 徽章 ---------- */
+/* 数据目录行里跟在路径后面的体积 —— 小一号、灰色，别抢路径的注意力 */
+.sizesm {
+  margin-left: 7px;
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -607,8 +621,7 @@ code {
   white-space: nowrap;
 }
 
-/* ---------- 输入 / 按钮 ---------- */
-.field {
+/* ---------- 输入 / 按钮 ---------- */.field {
   display: flex;
   gap: 8px;
   align-items: center;
@@ -707,6 +720,15 @@ input:not([type]):focus {
   padding: 0 10px;
   font-size: 12px;
   border-radius: 8px;
+}
+/* 行内小按钮：跟在数字后面的「精确统计」这类，不能把行撑高 */
+.btn.xs {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11.5px;
+  line-height: 1;
+  border-radius: 7px;
+  vertical-align: middle;
 }
 .btn[disabled] {
   opacity: 0.45;

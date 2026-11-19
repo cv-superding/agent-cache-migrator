@@ -287,6 +287,41 @@ async fn clear_history() -> Result<Value, String> {
     .map_err(|e| format!("清空历史异常：{e}"))?
 }
 
+/// 精确统计一个 Agent 的数据目录（不设上限）—— 列表里的数是「扫到上限为止」
+/// 的下限（`≥`），用户想看准数时点一下，走这里慢慢算。
+#[tauri::command]
+async fn measure_agent(agent_id: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let defs = agents::load(None)?;
+        let def = defs
+            .into_iter()
+            .find(|d| d.id == agent_id)
+            .ok_or_else(|| format!("注册表里没有 id = {agent_id}"))?;
+
+        let mut total = acm_core::fsutil::Measure::default();
+        let mut paths = Vec::new();
+        for tpl in &def.paths {
+            let Some(p) = paths::expand(tpl) else { continue };
+            if !p.exists() {
+                continue;
+            }
+            let m = acm_core::fsutil::measure_exact(&p);
+            total.files += m.files;
+            total.bytes += m.bytes;
+            total.capped |= m.capped;
+            paths.push(serde_json::json!({
+                "resolved": p.to_string_lossy(),
+                "bytes": m.bytes,
+                "files": m.files,
+            }));
+        }
+
+        Ok(serde_json::json!({ "total": total, "paths": paths }))
+    })
+    .await
+    .map_err(|e| format!("精确统计异常：{e}"))?
+}
+
 /// 迁移历史（`history.jsonl`，新的在前；默认最近 15 条）。
 #[tauri::command]
 async fn history(all: Option<bool>) -> Result<Value, String> {
@@ -414,6 +449,7 @@ pub fn run() {
             snapshots,
             history,
             clear_history,
+            measure_agent,
             env_set,
             purge_agent,
             delete_snapshot,

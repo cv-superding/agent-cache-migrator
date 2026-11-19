@@ -15,6 +15,7 @@ import type {
   AgentDef,
   DetectedAgent,
   DrivesPayload,
+  Measure,
   MigrateReport,
   Plan,
   Progress,
@@ -136,6 +137,28 @@ export function purgeAgent(agentId: string, preview = false): Promise<PurgeRepor
   return invoke("purge_agent", { agentId, preview });
 }
 
+/** 精确统计（不设上限）：列表里的数是「扫到上限为止」的下限，这个给准数。
+ *
+ * 大目录可能要几十秒到几分钟 —— 调用方必须配 loading 态。
+ */
+export function measureAgent(
+  agentId: string,
+): Promise<{ total: Measure; paths: { resolved: string; bytes: number; files: number }[] }> {
+  if (DEMO) {
+    const a = demoData.AGENTS.find((x) => x.id === agentId);
+    const total = a?.total ?? { files: 0, bytes: 0, capped: false };
+    return Promise.resolve({
+      total: { ...total, capped: false },
+      paths: (a?.paths ?? []).map((p) => ({
+        resolved: p.resolved,
+        bytes: p.measure.bytes,
+        files: p.measure.files,
+      })),
+    });
+  }
+  return invoke("measure_agent", { agentId });
+}
+
 export function cancelMigrate(): Promise<void> {
   if (DEMO) return Promise.resolve();
   return invoke("cancel_migrate");
@@ -235,6 +258,7 @@ export const api = {
   repair,
   setEnv,
   purgeAgent,
+  measureAgent,
   snapshots,
   history,
   clearHistory,

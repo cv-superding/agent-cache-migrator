@@ -102,7 +102,9 @@ export function Sidebar({
           >
             <AgentIcon id={a.id} name={a.name} size={22} />
             <span className="nm">{a.name}</span>
-            <span className="sz">{a.total.bytes > 0 ? human(a.total.bytes) : ""}</span>
+            <span className="sz">
+              {a.total.bytes > 0 ? `${a.total.capped ? "≥" : ""}${human(a.total.bytes)}` : ""}
+            </span>
             <span
               className={`dot ${a.running.length > 0 ? "running" : agentState(a)}`}
               title={
@@ -127,7 +129,9 @@ export function Sidebar({
               >
                 <AgentIcon id={a.id} name={a.name} size={22} />
                 <span className="nm">{a.name}</span>
-                <span className="sz">{a.total.bytes > 0 ? human(a.total.bytes) : ""}</span>
+                <span className="sz">
+              {a.total.bytes > 0 ? `${a.total.capped ? "≥" : ""}${human(a.total.bytes)}` : ""}
+            </span>
                 <span className="dot orphan" title={stateLabelL(agentState(a))} />
               </button>
             ))}
@@ -146,7 +150,9 @@ export function Sidebar({
           >
             <AgentIcon id={a.id} name={a.name} size={22} />
             <span className="nm">{a.name}</span>
-            <span className="sz">{a.total.bytes > 0 ? human(a.total.bytes) : ""}</span>
+            <span className="sz">
+              {a.total.bytes > 0 ? `${a.total.capped ? "≥" : ""}${human(a.total.bytes)}` : ""}
+            </span>
             <span
               className={`dot ${a.running.length > 0 ? "running" : agentState(a)}`}
               title={

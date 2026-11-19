@@ -5,6 +5,7 @@ import type {
   DetectedAgent,
   DriveInfo,
   DrivesPayload,
+  Measure,
   MigrateReport,
   Plan,
   Progress,
@@ -50,6 +51,13 @@ export default function App() {
   const [repairing, setRepairing] = useState(false);
   const [settingEnv, setSettingEnv] = useState(false);
   const [purging, setPurging] = useState(false);
+  /** 精确统计结果（只对当前选中的 Agent；列表里的数是「扫到上限」的下限）。 */
+  const [exact, setExact] = useState<{
+    id: string;
+    total: Measure;
+    paths: { resolved: string; bytes: number; files: number }[];
+  } | null>(null);
+  const [measuring, setMeasuring] = useState(false);
   /** 迁移成功后顺带设置官方重定位环境变量（联接 + 变量双保险）。 */
   const [withEnv, setWithEnv] = useState(false);
   const [history, setHistory] = useState<{
@@ -144,8 +152,7 @@ export default function App() {
   }
 
   /** 清空迁移历史（只删日志文件，动作/数据都不动）。 */
-  async function doClearHistory() {
-    try {
+  async function doClearHistory() {    try {
       const n = await api.clearHistory();
       toast(t("toastHistoryCleared"), t("toastHistoryClearedSub", { n }));
       await refreshHistory(allHistory);
@@ -173,6 +180,8 @@ export default function App() {
     let alive = true;
     setPlanning(true);
     setPlanErr(null);
+    // 换 Agent 时旧计划必须先作废 —— 否则界面上会出现「豆包」配「Trae 的落点」
+    setPlan(null);
     api
       .plan(sel, destRoot)
       .then((p) => alive && setPlan(p))
@@ -369,6 +378,23 @@ export default function App() {
     }
   }
 
+  /** 精确统计（不设上限）—— 列表里的数是「扫到上限为止」的下限，点一下拿准数。 */
+  async function doMeasure(id: string) {
+    setMeasuring(true);
+    try {
+      const r = await api.measureAgent(id);
+      setExact({ id, total: r.total, paths: r.paths });
+      toast(
+        t("toastMeasured"),
+        `${human(r.total.bytes)} · ${r.total.files.toLocaleString()} 个文件`,
+      );
+    } catch (e) {
+      toast(t("toastMeasureFailed"), String(e), true);
+    } finally {
+      setMeasuring(false);
+    }
+  }
+
   // ---------------------------------------------------------------- 渲染
 
   const detected = agents.filter((a) => a.detected);
@@ -386,6 +412,9 @@ export default function App() {
           setReport(null);
           setLog([]);
           setProgress(null);
+          // 精确统计只对上一个 Agent 有意义，切走就作废
+          setExact(null);
+          setMeasuring(false);
         }}
         onRescan={() => {
           void refreshAgents(true);
@@ -427,17 +456,21 @@ export default function App() {
                 <div className="stat">
                   <span className="k">{t("rowSize")}</span>
                   <b className="v">
-                    {cur.total.files === 0 && !cur.detected ? "—" : (
+                    {cur.total.files === 0 && !cur.detected ? (
+                      "—"
+                    ) : (
                       <>
-                        {cur.total.capped ? "≥" : ""}
-                        {human(cur.total.bytes)}
+                        {exact?.id === cur.id ? "" : cur.total.capped ? "≥" : ""}
+                        {human(exact?.id === cur.id ? exact.total.bytes : cur.total.bytes)}
                       </>
                     )}
                   </b>
                 </div>
                 <div className="stat">
                   <span className="k">{t("statFiles")}</span>
-                  <b className="v">{cur.total.files.toLocaleString()}</b>
+                  <b className="v">
+                    {(exact?.id === cur.id ? exact.total.files : cur.total.files).toLocaleString()}
+                  </b>
                 </div>
                 <div className="stat">
                   <span className="k">{t("statDirs")}</span>
@@ -464,6 +497,9 @@ export default function App() {
                 settingEnv={settingEnv}
                 purging={purging}
                 onPurge={(id) => void askPurge(id)}
+                exact={exact?.id === cur.id ? exact : null}
+                measuring={measuring}
+                onMeasure={(id) => void doMeasure(id)}
                 onRepair={(id) => {
                   const a = agents.find((x) => x.id === id);
                   setConfirm({
@@ -719,6 +755,9 @@ function StatusCard({
   onSetEnv,
   purging,
   onPurge,
+  exact,
+  measuring,
+  onMeasure,
 }: {
   a: DetectedAgent;
   onRepair?: (id: string) => void;
@@ -727,9 +766,14 @@ function StatusCard({
   onSetEnv?: (id: string) => void;
   purging?: boolean;
   onPurge?: (id: string) => void;
+  /** 精确统计结果（不设上限）；没有就是列表里的近似值 */
+  exact?: { total: Measure; paths: { resolved: string; bytes: number; files: number }[] } | null;
+  measuring?: boolean;
+  onMeasure?: (id: string) => void;
 }) {
   const st = agentState(a);
   const shown = a.paths.filter((p) => p.kind !== "missing");
+  const size = exact?.total ?? a.total;
 
   return (
     <Card title={t("statusTitle")} sub={t("statusSub")}>
@@ -740,7 +784,7 @@ function StatusCard({
             shown.length === 0 ? (
               <span style={{ color: "var(--muted)" }}>{t("noPaths")}</span>
             ) : (
-              shown.map((p) => (
+              shown.map((p, i) => (
                 <div key={p.resolved} style={{ marginBottom: 3 }}>
                   <span className="mono">{p.resolved}</span>{" "}
                   {p.isLink ? (
@@ -751,6 +795,29 @@ function StatusCard({
                     )
                   ) : (
                     <span className="badge b-gray">{t("realDir")}</span>
+                  )}
+                  {exact?.paths.find((x) => x.resolved === p.resolved) ? (
+                    <span className="sizesm">
+                      {human(exact.paths.find((x) => x.resolved === p.resolved)!.bytes)} ·{" "}
+                      {exact.paths
+                        .find((x) => x.resolved === p.resolved)!
+                        .files.toLocaleString()}
+                      {t("filesUnit")}
+                    </span>
+                  ) : (
+                    p.kind === "dir" &&
+                    p.measure.bytes > 0 && (
+                      <span className="sizesm">
+                        {human(p.measure.bytes)} · {p.measure.files.toLocaleString()}
+                        {t("filesUnit")}
+                      </span>
+                    )
+                  )}
+                  {/* 多个目录时说明「搬哪个、留哪个」—— 只搬第一个存在的 */}
+                  {shown.length > 1 && (
+                    <span className={`badge ${i === 0 ? "b-ok" : "b-gray"}`}>
+                      {i === 0 ? t("pathMove") : t("pathStay")}
+                    </span>
                   )}
                 </div>
               ))
@@ -774,11 +841,23 @@ function StatusCard({
               "—"
             ) : (
               <>
-                {a.total.capped ? "≥" : ""}
-                {human(a.total.bytes)} · {a.total.files.toLocaleString()}
+                {exact ? "" : a.total.capped ? "≥" : ""}
+                {human(size.bytes)} · {size.files.toLocaleString()}
                 {t("filesUnit")}
-                {a.total.capped && (
+                {!exact && a.total.capped && (
                   <span style={{ color: "var(--muted)" }}>{t("sizeCapped")}</span>
+                )}
+                {exact && <span style={{ color: "var(--accent-ink)" }}>{t("sizeExact")}</span>}
+                {onMeasure && a.detected && (
+                  <button
+                    className="btn xs"
+                    style={{ marginLeft: 8 }}
+                    disabled={measuring}
+                    title={t("measureTip")}
+                    onClick={() => onMeasure(a.id)}
+                  >
+                    {measuring ? t("measuring") : t("measureExact")}
+                  </button>
                 )}
               </>
             )
