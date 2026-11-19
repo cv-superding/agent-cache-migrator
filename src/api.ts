@@ -178,6 +178,12 @@ export function history(all = false): Promise<{
   return invoke("history", { all });
 }
 
+/** 清空迁移历史（整份日志文件删掉；迁移结果、联接、快照都不动）。 */
+export function clearHistory(): Promise<number> {
+  if (DEMO) return Promise.resolve(1);
+  return invoke<{ removed: number }>("clear_history").then((r) => r.removed);
+}
+
 export function deleteSnapshot(
   path: string,
   permanent: boolean,
@@ -231,6 +237,7 @@ export const api = {
   purgeAgent,
   snapshots,
   history,
+  clearHistory,
   deleteSnapshot,
   openPath,
   version,

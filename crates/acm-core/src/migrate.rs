@@ -518,8 +518,32 @@ pub fn run_with_options(
 }
 
 /// 历史记录文件：`%APPDATA%/AgentCache/history.jsonl`，每行一条 JSON。
+///
+/// 🔴 `cfg!(test)` 时返回 `None` —— 单元测试会真的跑迁移/回滚，如果不拦住，
+/// `cargo test` 的假记录（`AC_TEST_ROLLBACK_VAR`、`%TEMP%\acm-rbenv-xxxx`）
+/// 就会写进用户真实的历史文件，界面上看起来像「用户自己干过这些事」。
 pub fn history_path() -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
     crate::paths::roaming_dir().map(|d| d.join("AgentCache").join("history.jsonl"))
+}
+
+/// 清空迁移历史（整份文件删掉）。返回被删掉的记录条数。
+///
+/// 文件不存在 = 已经干净，返回 0，不算错误。
+pub fn clear_history() -> Result<usize, String> {
+    let Some(p) = history_path() else {
+        return Err("定位不了历史文件（缺少用户配置目录）".to_string());
+    };
+    let n = std::fs::read_to_string(&p)
+        .map(|s| s.lines().filter(|l| !l.trim().is_empty()).count())
+        .unwrap_or(0);
+    match std::fs::remove_file(&p) {
+        Ok(()) => Ok(n),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Err(e) => Err(format!("删除 {} 失败：{e}", p.display())),
+    }
 }
 
 fn append_history(rep: &MigrateReport, agent_id: &str) {

@@ -276,6 +276,17 @@ async fn purge_agent(agent_id: String, preview: Option<bool>) -> Result<Value, S
     .map_err(|e| format!("清理任务异常：{e}"))?
 }
 
+/// 清空迁移历史 —— 界面上「迁移历史」卡片里的「清空」按钮。
+#[tauri::command]
+async fn clear_history() -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let n = migrate::clear_history()?;
+        Ok(serde_json::json!({ "removed": n }))
+    })
+    .await
+    .map_err(|e| format!("清空历史异常：{e}"))?
+}
+
 /// 迁移历史（`history.jsonl`，新的在前；默认最近 15 条）。
 #[tauri::command]
 async fn history(all: Option<bool>) -> Result<Value, String> {
@@ -402,6 +413,7 @@ pub fn run() {
             repair,
             snapshots,
             history,
+            clear_history,
             env_set,
             purge_agent,
             delete_snapshot,

@@ -4,6 +4,11 @@
 
 ## [未发布]
 
+### 修复
+
+- **迁移历史被单元测试污染**：`cargo test` 会真的跑迁移/回滚，测试用例里的假记录（`AC_TEST_ROLLBACK_VAR`、`%TEMP%\acm-rbenv-xxxx`）被写进用户真实的历史文件，界面上看起来像「用户自己干过这些事」。现在 `history_path()` 在 `cfg!(test)` 下直接返回 `None`，测试不再落盘。
+- **历史日志可以清空**：界面「迁移历史」卡片新增「清空历史」（确认后删掉整份 `history.jsonl`，迁移结果 / 联接 / 快照都不动），CLI 对应 `acm history --clear`。
+
 ### 新增
 
 - **「已卸载 · 只剩缓存」状态**：`agents.toml` 新增 `install = { uninstall = [...], exe = [...] }` —— 用 Windows 卸载清单（HKCU / HKLM / WOW6432Node 三处，**注册表原生 API 读 UTF-16**）判断应用本身还在不在。数据目录还在、卸载清单里已经没有它 → 界面标「已卸载」、侧栏单独成组「已卸载 · 只剩缓存（n）」，详情页只剩「清理缓存」一个主操作（迁移 / 目标盘两张卡片直接收起），清完就落到「未安装」。已给 uTools / Trae 国际版 / Trae CN / DeepSeek Harness / 豆包 / ZCode / Ollama 配了线索；没配的 Agent 一律 `unknown`，绝不瞎猜。

@@ -23,7 +23,7 @@ acm —— AgentCache 命令行
   acm purge <id> [--yes]     清理缓存：把数据目录 / 更新器目录整体移入回收站
                             （卸载残留、想把应用重置回干净状态时用；联接会跳过）
   acm snapshots              列出所有迁移快照（原目录改名保留的那份）
-  acm history [--all]        查看迁移历史（最近 20 条，--all 全部）
+  acm history [--all] [--clear]  查看迁移历史（最近 20 条，--all 全部；--clear 清空日志）
   acm doctor [--json]        体检：断链 / 运行中 / 快照脏状态 / 孤儿快照，附修复命令
   acm drives                 列出盘符与剩余空间
   acm help                   显示这段帮助
@@ -795,6 +795,11 @@ fn cmd_snapshots(args: &[String]) -> Result<(), String> {
 fn cmd_history(args: &[String]) -> Result<(), String> {
     let all = args.iter().any(|a| a == "--all");
     let json = args.iter().any(|a| a == "--json");
+    if args.iter().any(|a| a == "--clear") {
+        let n = migrate::clear_history()?;
+        println!("已清空迁移历史（{n} 条记录）");
+        return Ok(());
+    }
     let Some(p) = migrate::history_path() else {
         return Err("定位不了历史文件（缺少用户配置目录）".to_string());
     };

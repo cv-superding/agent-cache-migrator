@@ -143,6 +143,17 @@ export default function App() {
     }
   }
 
+  /** 清空迁移历史（只删日志文件，动作/数据都不动）。 */
+  async function doClearHistory() {
+    try {
+      const n = await api.clearHistory();
+      toast(t("toastHistoryCleared"), t("toastHistoryClearedSub", { n }));
+      await refreshHistory(allHistory);
+    } catch (e) {
+      toast(t("toastClearFailed"), String(e), true);
+    }
+  }
+
   async function refreshDrives() {
     try {
       const d = await api.drives();
@@ -624,6 +635,22 @@ export default function App() {
               setAllHistory(next);
               void refreshHistory(next);
             }}
+            onClear={() =>
+              setConfirm({
+                title: t("clearHistoryTitle"),
+                okText: t("clearHistory"),
+                body: (
+                  <>
+                    会把 <span className="mono">{history?.path}</span> 整个删掉（
+                    <b>{history?.items.length ?? 0}</b> 条记录，含测试遗留的假记录）。
+                    <div className="note warn" style={{ marginTop: 8 }}>
+                      只删「查账日志」—— 已经迁移好的数据、联接和快照都<b>不受影响</b>。
+                    </div>
+                  </>
+                ),
+                onOk: () => void doClearHistory(),
+              })
+            }
           />
         </div>
 
@@ -835,6 +862,7 @@ function HistoryCard({
   nameOf,
   showAll,
   onToggleAll,
+  onClear,
 }: {
   history: {
     items: {
@@ -856,6 +884,7 @@ function HistoryCard({
   nameOf: (id: string) => string;
   showAll: boolean;
   onToggleAll: () => void;
+  onClear?: () => void;
 }) {
   const all = history?.items ?? [];
   // 筛选状态放组件内部 —— 它是查账工具的本地视角，不用污染全局
@@ -967,9 +996,16 @@ function HistoryCard({
               );
             })}
           </div>
-          <button className="btn" style={{ marginTop: 8 }} onClick={onToggleAll}>
-            {showAll ? t("recent15") : t("viewAll")}
-          </button>
+          <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+            <button className="btn" onClick={onToggleAll}>
+              {showAll ? t("recent15") : t("viewAll")}
+            </button>
+            {onClear && all.length > 0 && (
+              <button className="btn dangerghost" onClick={onClear}>
+                {t("clearHistory")}
+              </button>
+            )}
+          </div>
           <div style={{ color: "var(--muted)", fontSize: 11.5, marginTop: 8 }} className="mono">
             {history?.path}
           </div>
