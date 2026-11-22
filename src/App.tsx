@@ -53,6 +53,8 @@ export default function App() {
   const [purging, setPurging] = useState(false);
   /** 正在结束某个 Agent 的进程（「运行状态」旁边的按钮）。 */
   const [closing, setClosing] = useState(false);
+  /** 正在改 / 还原快捷方式的启动参数。 */
+  const [argWorking, setArgWorking] = useState(false);
   /** 精确统计结果（只对当前选中的 Agent；列表里的数是「扫到上限」的下限）。 */
   const [exact, setExact] = useState<{
     id: string;
@@ -304,6 +306,42 @@ export default function App() {
       setClosing(false);
       // 重扫一次：把「已经退出的」从运行状态里摘掉
       await refreshAgents(false);
+    }
+  }
+
+  /** 改用启动参数（--user-data-dir）：改快捷方式，原值已备份。 */
+  async function doApplyArg(id: string) {
+    const root = destRoot || drives?.defaultDestRoot || "";
+    if (!root) {
+      toast(t("toastArgNoDest"), "", true);
+      return;
+    }
+    setArgWorking(true);
+    try {
+      const r = await api.applyLaunchArgs(id, root);
+      if (r.changed.length > 0) {
+        toast(t("toastArgApplied"), r.changed.map((c) => c.path).join("；"));
+      } else {
+        toast(t("toastArgNone"), r.problems.join("；"), true);
+      }
+      await refreshAgents(false);
+    } catch (e) {
+      toast(t("toastArgFailed"), String(e), true);
+    } finally {
+      setArgWorking(false);
+    }
+  }
+
+  async function doRestoreArg(id: string) {
+    setArgWorking(true);
+    try {
+      const r = await api.restoreLaunchArgs(id);
+      toast(t("toastArgRestored"), `${r.restored} 个 · ${r.backup}`);
+      await refreshAgents(false);
+    } catch (e) {
+      toast(t("toastArgRestoreFailed"), String(e), true);
+    } finally {
+      setArgWorking(false);
     }
   }
 
@@ -588,6 +626,34 @@ export default function App() {
                     onOk: () => void doClose(id),
                   });
                 }}
+                argWorking={argWorking}
+                onApplyArg={(id) => {
+                  const a = agents.find((x) => x.id === id);
+                  const root = destRoot || drives?.defaultDestRoot || "";
+                  setConfirm({
+                    title: t("argTitle"),
+                    okText: t("argOk"),
+                    body: (
+                      <>
+                        会把 <b>{a?.name ?? id}</b> 的快捷方式改成带启动参数：
+                        <div className="mono" style={{ margin: "8px 0" }}>
+                          {(a?.strategy.detail ?? "").replace(
+                            "<目标目录>",
+                            `${root}/${id}`,
+                          )}
+                        </div>
+                        数据落点 <span className="mono">{root}/{id}</span>，
+                        原目录<b>不留任何链接</b>。
+                        <div className="note info" style={{ marginTop: 8 }}>
+                          会改桌面 / 开始菜单 / 任务栏里的 .lnk（原值自动备份，可一键还原）。
+                          首次启动是全新 profile —— 也可以先「开始迁移」把数据搬过去再改参数。
+                        </div>
+                      </>
+                    ),
+                    onOk: () => void doApplyArg(id),
+                  });
+                }}
+                onRestoreArg={(id) => void doRestoreArg(id)}
               />
               {/* 应用已经卸载、只剩缓存时，迁移 / 目标盘两张卡片没有意义 —— 只留清理 */}
               {agentState(cur) !== "orphan" && (
@@ -615,6 +681,30 @@ export default function App() {
                 }}
                 onRun={() => {
                   if (!plan || plan.blockers.length) return;
+                  // 自动匹配最优解：推荐启动参数时，「开始迁移」直接按推荐执行
+                  if (cur.strategy.kind === "launch_arg" && cur.strategy.auto) {
+                    setConfirm({
+                      title: t("argTitle"),
+                      danger: false,
+                      okText: t("argOk"),
+                      body: (
+                        <>
+                          <div className="rows">
+                            <Row k="推荐方式" v={cur.strategy.label} />
+                            <Row
+                              k="目标目录"
+                              v={<span className="mono">{`${destRoot || ""}\\${cur.id}`}</span>}
+                            />
+                          </div>
+                          <div className="note info" style={{ marginTop: 10 }}>
+                            {t("argAutoBody")}
+                          </div>
+                        </>
+                      ),
+                      onOk: () => void doApplyArg(cur.id),
+                    });
+                    return;
+                  }
                   setConfirm({
                     title: t("migrateTitle"),
                     danger: false,
@@ -812,6 +902,9 @@ function StatusCard({
   onMeasure,
   closing,
   onClose,
+  argWorking,
+  onApplyArg,
+  onRestoreArg,
 }: {
   a: DetectedAgent;
   onRepair?: (id: string) => void;
@@ -827,6 +920,10 @@ function StatusCard({
   /** 正在结束进程 */
   closing?: boolean;
   onClose?: (id: string) => void;
+  /** 正在改快捷方式（--user-data-dir） */
+  argWorking?: boolean;
+  onApplyArg?: (id: string) => void;
+  onRestoreArg?: (id: string) => void;
 }) {
   const st = agentState(a);
   const shown = a.paths.filter((p) => p.kind !== "missing");
@@ -923,6 +1020,53 @@ function StatusCard({
         {a.updaters.length > 0 && (
           <Row k={t("rowUpdater")} v={<span className="mono">{a.updaters.join("、")}</span>} />
         )}
+        <Row
+          k={t("rowStrategy")}
+          v={
+            <>
+              <span
+                className={`badge ${
+                  a.strategy.kind === "junction" ? "b-gray" : "b-ok"
+                }`}
+              >
+                {a.strategy.label}
+              </span>
+              {a.strategy.detail && (
+                <span className="mono" style={{ marginLeft: 8 }}>
+                  {a.strategy.detail}
+                </span>
+              )}
+              {a.strategy.kind === "launch_arg" && onApplyArg && st !== "moved" && (
+                <>
+                  <button
+                    className="btn xs"
+                    style={{ marginLeft: 8 }}
+                    disabled={argWorking}
+                    title={t("argTip")}
+                    onClick={() => onApplyArg(a.id)}
+                  >
+                    {argWorking ? t("argWorking") : t("argBtn")}
+                  </button>
+                  {onRestoreArg && (
+                    <button
+                      className="btn xs dangerghost"
+                      style={{ marginLeft: 6 }}
+                      disabled={argWorking}
+                      onClick={() => onRestoreArg(a.id)}
+                    >
+                      {t("argRestore")}
+                    </button>
+                  )}
+                </>
+              )}
+              <div style={{ color: "var(--muted)", marginTop: 3, fontSize: 11.5 }}>
+                {a.strategy.note}
+                {a.strategy.alternatives.length > 0 &&
+                  ` · 备选：${a.strategy.alternatives.join(" / ")}`}
+              </div>
+            </>
+          }
+        />
         <Row
           k={t("rowRunning")}
           v={

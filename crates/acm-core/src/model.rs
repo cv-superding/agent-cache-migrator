@@ -55,6 +55,19 @@ pub struct AgentDef {
     #[serde(default)]
     pub env_relocate: Option<EnvRelocate>,
 
+    /// Chromium / Electron 的启动参数重定位（`--user-data-dir={dest}`）。
+    ///
+    /// `{dest}` 会被替换成这台机器上的目标目录。**比联接更干净**：原路径什么都不留，
+    /// 也不怕应用更新时重建目录把联接覆盖掉。代价是要改快捷方式（桌面 / 开始菜单 /
+    /// 任务栏），所以必须配 [`AgentDef::shortcut_exes`] 才能自动认出该改哪几个。
+    #[serde(default)]
+    pub launch_args: Vec<String>,
+
+    /// 与 [`AgentDef::launch_args`] 配套：快捷方式指向的可执行文件名
+    /// （如 `Trae.exe` / `Cursor.exe`），用来筛选「哪些 .lnk 是这个应用的」。
+    #[serde(default)]
+    pub shortcut_exes: Vec<String>,
+
     /// 迁移前需要退出的进程（不区分大小写，支持 `*`）
     #[serde(default)]
     pub processes: Vec<String>,
@@ -131,6 +144,9 @@ pub struct DetectedAgent {
     pub note: Option<String>,
     pub env_relocate: Option<EnvRelocate>,
 
+    /// **最优迁移方式**（内核按 `agents.toml` 的能力声明自动推荐）。
+    pub strategy: RelocatePlan,
+
     /// 综合判定：装了没（数据目录 / 更新器还在）
     pub detected: bool,
     /// 应用**本身**还装没装：`Some(false)` = 已经卸载、只剩缓存；
@@ -154,6 +170,23 @@ pub struct DetectedAgent {
 }
 
 /// 一个数据目录的命中情况。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RelocatePlan {
+    /// `env` | `launch_arg` | `junction` | `setting`
+    pub kind: String,
+    /// 给用户看的中文名：「环境变量」/「启动参数」/「目录联接」/「应用内设置」
+    pub label: String,
+    /// 一句话说明为什么这是最优（或者它为什么是兜底）
+    pub note: String,
+    /// 具体值：变量名，或展开后的启动参数
+    pub detail: Option<String>,
+    /// 能不能在界面上一键执行（`setting` 只能给指引，不能代劳）
+    pub auto: bool,
+    /// 其它可行但次优的方式（只用于展示，不执行）
+    pub alternatives: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PathHit {
@@ -236,6 +269,14 @@ mod state_tests {
             category: "agent".into(),
             note: None,
             env_relocate: None,
+            strategy: RelocatePlan {
+                kind: "junction".into(),
+                label: "目录联接".into(),
+                note: String::new(),
+                detail: None,
+                auto: true,
+                alternatives: Vec::new(),
+            },
             detected,
             installed: Some(true),
             how: Vec::new(),

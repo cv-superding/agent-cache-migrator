@@ -240,6 +240,8 @@ mod tests {
             paths: paths_tpl,
             updater: Vec::new(),
             env_relocate: None,
+            launch_args: Vec::new(),
+            shortcut_exes: Vec::new(),
             processes: Vec::new(),
             ignore_processes: Vec::new(),
             skip: Vec::new(),

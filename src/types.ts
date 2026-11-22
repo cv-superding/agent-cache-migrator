@@ -60,6 +60,16 @@ export interface AgentDef {
   install: InstallHint | null;
 }
 
+export interface RelocatePlan {
+  /** env | launch_arg | junction | setting */
+  kind: string;
+  label: string;
+  note: string;
+  detail: string | null;
+  auto: boolean;
+  alternatives: string[];
+}
+
 export interface DetectedAgent {
   id: string;
   name: string;
@@ -80,6 +90,8 @@ export interface DetectedAgent {
   running: string[];
   /** 命中了但被 `ignore_processes` 排除的常驻服务（不算应用在跑） */
   ignored: string[];
+  /** 内核按 agents.toml 的声明自动推荐的最优迁移方式 */
+  strategy: RelocatePlan;
   total: Measure;
 }
 

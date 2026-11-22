@@ -37,7 +37,7 @@ export const DEFS: AgentDef[] = DEFS_RAW.map((d) => ({
   install: null,
 }));
 
-const AGENTS_RAW: Omit<DetectedAgent, "category" | "installed" | "ignored">[] = [
+const AGENTS_RAW: Omit<DetectedAgent, "category" | "installed" | "ignored" | "strategy">[] = [
   {
     id: "workbuddy-cn",
     name: "WorkBuddy 国内版",
@@ -429,10 +429,43 @@ const AGENTS_RAW: Omit<DetectedAgent, "category" | "installed" | "ignored">[] = 
   },
 ];
 
+/** 演示用的「最优迁移方式」—— 与内核 strategy::recommend 的优先级一致。 */
+function demoStrategy(id: string): DetectedAgent["strategy"] {
+  if (id === "claude" || id === "codex") {
+    return {
+      kind: "env",
+      label: "环境变量",
+      note: "应用官方读这个变量，原目录可以不留任何东西",
+      detail: id === "codex" ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR",
+      auto: true,
+      alternatives: ["目录联接（兜底）"],
+    };
+  }
+  if (["trae", "cursor", "codebuddy-cn", "cherry"].includes(id)) {
+    return {
+      kind: "launch_arg",
+      label: "启动参数",
+      note: "Chromium / VS Code 系认这个参数，数据搬家后原目录不留东西；会改快捷方式（已备份，可还原）",
+      detail: "--user-data-dir=<目标目录>",
+      auto: true,
+      alternatives: ["目录联接（兜底）"],
+    };
+  }
+  return {
+    kind: "junction",
+    label: "目录联接",
+    note: "该应用没有公开的重定位开关；目录联接对应用透明，是通用兜底",
+    detail: null,
+    auto: true,
+    alternatives: [],
+  };
+}
+
 export const AGENTS: DetectedAgent[] = AGENTS_RAW.map((a) => ({
   ...a,
   category: NON_AGENT.has(a.id) ? "cache" : "agent",
   installed: UNINSTALLED.has(a.id) ? false : true,
+  strategy: demoStrategy(a.id),
   // Codex 的沙箱服务常驻：演示「后台服务不算运行中」这条提示
   ignored: a.id === "codex" ? ["codex-windows-sandbox-service.exe"] : [],
 }));

@@ -297,6 +297,39 @@ async fn close_agent(agent_id: String) -> Result<Value, String> {
     .map_err(|e| format!("结束进程任务异常：{e}"))?
 }
 
+/// 「改用启动参数（--user-data-dir）」：把桌面 / 开始菜单 / 任务栏里指向该应用的
+/// 快捷方式改成带参数启动，并备份原值（`restore_launch_args` 可还原）。
+#[tauri::command]
+async fn apply_launch_args(agent_id: String, dest_root: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let defs = agents::load(None)?;
+        let def = defs
+            .iter()
+            .find(|d| d.id == agent_id)
+            .ok_or_else(|| format!("注册表里没有 id = {agent_id}"))?;
+        let rep =
+            acm_core::shortcuts::apply_launch_args(def, std::path::Path::new(&dest_root))?;
+        serde_json::to_value(rep).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("改快捷方式任务异常：{e}"))?
+}
+
+/// 还原启动参数：把最近一次备份的 `.lnk` 参数写回去。
+#[tauri::command]
+async fn restore_launch_args(agent_id: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let backups = acm_core::shortcuts::backups(&agent_id);
+        let Some(latest) = backups.first() else {
+            return Err(format!("{agent_id} 没有可还原的备份"));
+        };
+        let n = acm_core::shortcuts::restore(std::path::Path::new(latest))?;
+        Ok(serde_json::json!({ "restored": n, "backup": latest }))
+    })
+    .await
+    .map_err(|e| format!("还原任务异常：{e}"))?
+}
+
 /// 清空迁移历史 —— 界面上「迁移历史」卡片里的「清空」按钮。
 #[tauri::command]
 async fn clear_history() -> Result<Value, String> {
@@ -483,6 +516,8 @@ pub fn run() {
             env_set,
             purge_agent,
             close_agent,
+            apply_launch_args,
+            restore_launch_args,
             delete_snapshot,
             open_path,
             version,

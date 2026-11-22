@@ -23,6 +23,8 @@ acm —— AgentCache 命令行
   acm purge <id> [--yes]     清理缓存：把数据目录 / 更新器目录整体移入回收站
                             （卸载残留、想把应用重置回干净状态时用；联接会跳过）
   acm kill <id> [--yes]      结束该 Agent 的进程（后台服务不杀），解决「明明关了还说在跑」
+  acm arg <id> --dest <根>    改用启动参数（--user-data-dir）：改快捷方式、原目录不留链接
+                            --unset 还原上次备份；--yes / --json 同其它命令
   acm snapshots              列出所有迁移快照（原目录改名保留的那份）
   acm history [--all] [--clear]  查看迁移历史（最近 20 条，--all 全部；--clear 清空日志）
   acm doctor [--json]        体检：断链 / 运行中 / 快照脏状态 / 孤儿快照，附修复命令
@@ -69,6 +71,13 @@ kill 选项:
   --yes                  跳过交互确认
   --json                 输出 JSON 报告
   --config <路径>        同上
+
+arg 选项:
+  --dest <根目录>        数据落点 = <根>/<id>（必填）
+  --unset                还原上次备份的快捷方式参数
+  --yes                  跳过交互确认
+  --json                 输出 JSON 报告
+  --config <路径>        同上
 ";
 
 fn main() -> ExitCode {
@@ -85,6 +94,7 @@ fn main() -> ExitCode {
         "env" => cmd_env(&args[1..]),
         "purge" => cmd_purge(&args[1..]),
         "kill" | "close" => cmd_kill(&args[1..]),
+        "arg" => cmd_arg(&args[1..]),
         "snapshots" => cmd_snapshots(&args[1..]),
         "history" => cmd_history(&args[1..]),
         "doctor" => cmd_doctor(&args[1..]),
@@ -419,7 +429,7 @@ fn confirm(prompt: &str, yes: bool) -> Result<bool, String> {
 }
 
 fn cmd_migrate(args: &[String]) -> Result<(), String> {
-    let usage = "用法：acm migrate <agent-id> [--dest <目标根目录>] [--yes] [--json]";
+    let usage = "用法：acm migrate <agent-id> [--dest <目标根目录>] [--yes] [--json] [--force]";
     let yes = args.iter().any(|a| a == "--yes");
     let json = args.iter().any(|a| a == "--json");
     let id = positional(args, usage)?;
@@ -429,6 +439,16 @@ fn cmd_migrate(args: &[String]) -> Result<(), String> {
         .iter()
         .find(|d| d.id == id)
         .ok_or_else(|| format!("注册表里没有 id = {id}"))?;
+
+    // 最优解自动匹配：官方支持启动参数的应用，默认不该建联接（联接遇到重装/升级容易失效，
+    // 且需要管理员权限）。这里直接拦下并指向 acm arg，--force 才回到联接方案。
+    if !def.launch_args.is_empty() && !args.iter().any(|a| a == "--force") {
+        let plan = acm_core::strategy::recommend(def);
+        return Err(format!(
+            "{} 的最优解是「{}」：{}。\n改用：acm arg {} --dest <目标根目录>\n确实要建目录联接请加 --force。",
+            def.name, plan.label, plan.note, def.id
+        ));
+    }
 
     // 🔴 Agent 可能声明多个数据目录（如 npm-cache 的两个缓存位置）——
     // 只迁第一个会留下一半在 C 盘。这里逐个迁：任一失败立即停止，其余不动。
@@ -857,6 +877,80 @@ fn cmd_kill(args: &[String]) -> Result<(), String> {
     }
     if !rep.failed.is_empty() && rep.killed.is_empty() {
         return Err("一个进程都没能结束".into());
+    }
+    Ok(())
+}
+
+fn cmd_arg(args: &[String]) -> Result<(), String> {
+    let usage =
+        "用法：acm arg <agent-id> --dest <根目录> [--unset] [--yes] [--json] [--config <路径>]";
+    let unset = args.iter().any(|a| a == "--unset");
+    let yes = args.iter().any(|a| a == "--yes");
+    let json = args.iter().any(|a| a == "--json");
+    let id = positional(args, usage)?;
+    let cfg = flag_path(args, "--config");
+    let defs = agents::load(cfg.as_deref())?;
+    let def = defs
+        .iter()
+        .find(|d| d.id == id)
+        .ok_or_else(|| format!("注册表里没有 id = {id}"))?;
+
+    if unset {
+        let backups = acm_core::shortcuts::backups(&def.id);
+        let Some(latest) = backups.first() else {
+            return Err(format!("{} 没有可还原的快捷方式备份", def.name));
+        };
+        let n = acm_core::shortcuts::restore(std::path::Path::new(latest))?;
+        println!("已还原 {n} 个快捷方式（备份：{latest}）");
+        return Ok(());
+    }
+
+    if def.launch_args.is_empty() || def.shortcut_exes.is_empty() {
+        return Err(format!(
+            "{} 没有声明 launch_args / shortcut_exes —— 用目录联接即可",
+            def.name
+        ));
+    }
+    let Some(dest) = flag_str(args, "--dest") else {
+        return Err(format!("{usage}\n（{id} 的落点 = <dest>/<id>）"));
+    };
+
+    if !confirm(
+        &format!(
+            "把 {} 的快捷方式改成带启动参数？\n  参数：{}\n  目标：{}\n⚠ 会改桌面 / 开始菜单 / 任务栏里的 .lnk（原值已备份，`acm arg {id} --unset` 可还原）。",
+            def.name,
+            def.launch_args.join(" "),
+            dest
+        ),
+        yes,
+    )? {
+        println!("已取消。");
+        return Ok(());
+    }
+
+    let rep = acm_core::shortcuts::apply_launch_args(def, std::path::Path::new(&dest))?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rep).map_err(|e| e.to_string())?
+        );
+    } else {
+        for c in &rep.changed {
+            println!("✓ {} → {}", c.path, c.after);
+        }
+        for s in &rep.skipped {
+            println!("· 跳过 {s}");
+        }
+        for p in &rep.problems {
+            println!("✗ {p}");
+        }
+        if let Some(b) = &rep.backup {
+            println!("备份：{b}");
+        }
+        println!("重启该应用（任务栏图标要重启资源管理器）后生效。");
+    }
+    if rep.changed.is_empty() && !rep.problems.is_empty() {
+        return Err("一个快捷方式都没改成功".into());
     }
     Ok(())
 }

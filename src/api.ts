@@ -231,6 +231,40 @@ export function closeAgent(agentId: string): Promise<KillReport> {
   return invoke<KillReport>("close_agent", { agentId });
 }
 
+export interface LaunchArgsReport {
+  dest: string;
+  changed: { path: string; before: string; after: string }[];
+  skipped: string[];
+  problems: string[];
+  backup: string | null;
+}
+
+/** 改用启动参数（--user-data-dir）：改快捷方式，原值自动备份。 */
+export function applyLaunchArgs(agentId: string, destRoot: string): Promise<LaunchArgsReport> {
+  if (DEMO) {
+    return Promise.resolve({
+      dest: `${destRoot}/${agentId}`,
+      changed: [
+        {
+          path: "C:\\Users\\demo\\Desktop\\Trae CN.lnk",
+          before: "",
+          after: `--user-data-dir=${destRoot}/${agentId}`,
+        },
+      ],
+      skipped: [],
+      problems: [],
+      backup: "C:\\demo\\lnk-backup",
+    });
+  }
+  return invoke<LaunchArgsReport>("apply_launch_args", { agentId, destRoot });
+}
+
+/** 还原上次备份的快捷方式参数。 */
+export function restoreLaunchArgs(agentId: string): Promise<{ restored: number; backup: string }> {
+  if (DEMO) return Promise.resolve({ restored: 1, backup: "C:\\demo\\lnk-backup" });
+  return invoke("restore_launch_args", { agentId });
+}
+
 export function openPath(path: string): Promise<void> {
   if (DEMO) {
     console.info("[demo] 打开路径：", path);
@@ -273,6 +307,8 @@ export const api = {
   setEnv,
   purgeAgent,
   closeAgent,
+  applyLaunchArgs,
+  restoreLaunchArgs,
   measureAgent,
   snapshots,
   history,

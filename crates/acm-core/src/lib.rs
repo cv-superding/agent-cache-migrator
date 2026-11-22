@@ -29,9 +29,11 @@ pub mod model;
 pub mod paths;
 pub mod procs;
 pub mod purge;
+pub mod shortcuts;
+pub mod strategy;
 pub mod syscmd;
 
 pub use agents::{detect, detect_all, detect_with, load, parse, DetectOpts, BUILTIN_TOML};
 pub use locks::Holder;
 pub use migrate::{MigrateReport, Plan, Progress, Snapshot};
-pub use model::{AgentDef, DetectedAgent, InstallHint, PathHit, RegistryFile};
+pub use model::{AgentDef, DetectedAgent, InstallHint, PathHit, RegistryFile, RelocatePlan};

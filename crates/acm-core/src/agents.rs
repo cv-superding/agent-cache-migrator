@@ -239,6 +239,8 @@ pub fn detect_with_install(
         category: def.category.clone(),
         note: def.note.clone(),
         env_relocate: def.env_relocate.clone(),
+        // 每个 Agent 自带「最优迁移方式」—— 界面据此把最合适的按钮放前面
+        strategy: crate::strategy::recommend(def),
         detected,
         installed: is_installed,
         how,

@@ -4,6 +4,19 @@
 
 ## [未发布]
 
+### 新增（2026-11-22 · 每个 Agent 自动匹配最优迁移方式）
+
+- **`strategy::recommend`：内核给每个 Agent 算出「最优解」并按优先级自动匹配** —— ① 官方环境变量（`env_relocate`）＞ ② 官方启动参数 `--user-data-dir`（`launch_args`）＞ ③ 目录联接兜底。每个推荐都带标签、理由、落点与备选方案，界面详情页新增「迁移方式」一行直接展示，CLI `acm detect --only <id>` 的 JSON 里也多出 `strategy` 字段。为什么这么做：联接是「对应用透明」的通用解，但应用一旦重装/升级，安装器会重建数据目录，联接就变成断链；官方支持的变量与启动参数不依赖文件系统把戏，更稳且不需要管理员权限 —— 能用官方的就别用兜底。
+- **`shortcuts`：改写 / 备份 / 还原 `.lnk` 的启动参数** —— 扫描用户与公共桌面、开始菜单（用户 + 全局）、任务栏 `User Pinned`（递归 ≤3 层），按 `shortcut_exes` 匹配目标 exe，把 `launch_args` 里的 `{dest}` 换成落点写进快捷方式；改之前整份备份到 `%APPDATA%\AgentCache\lnk-backup\<id>-<时间>\` 并写 `manifest.json`，随时一键还原。GUI「改用启动参数 / 还原」、CLI `acm arg <id> --dest <root> [--unset] [--yes] [--json]`、Tauri 命令 `apply_launch_args` / `restore_launch_args` 三条入口共用同一份实现。
+- **「开始迁移」按推荐自动分流**：详情页主按钮在推荐为启动参数时，点击即走「改快捷方式」（确认框说明为什么比联接稳、旧数据仍在原处、首次启动是新配置），不再硬搬目录 + 建联接。
+- **`acm migrate` 拦住「该用启动参数的应用」**：`agents.toml` 里声明了 `launch_args` 的 Agent，`acm migrate` 会直接给出最优解与 `acm arg` 命令，确需建联接要显式加 `--force`。
+
+### 修复（2026-11-22）
+
+- **`agents.toml` 的国内版 exe 名写错，导致「运行中」永远检测不到**：Trae 国内版实际是 `Trae CN.exe`、CodeBuddy 国内版是 `CodeBuddy CN.exe`（实测 `Get-Process` 有 15 个 `CodeBuddy CN` 进程），原来只写 `Trae.exe` / `CodeBuddy.exe`。已把 `processes` 与 `shortcut_exes` 一起改正并加注释。
+- **读写 PowerShell 结果文件时被 BOM 噎住**：Windows PowerShell 5.1 的 `Out-File -Encoding UTF8` 一定会写 BOM，`serde_json::from_str` 直接报 `expected value at line 1 column 1`（首次 `acm arg` 就是这个错）。现在读取端统一 `strip_prefix('\u{feff}')`，还原计数也一样。
+- **单个快捷方式时 JSON 被解包成对象**：`$rows | ConvertTo-Json` 在 PS 5.1 会把单元素数组拍平，Rust 侧按 `Vec` 反序列化就失败。改用 `ConvertTo-Json -InputObject $rows`。
+
 ### 新增（2026-11-19 · 结束进程 / 运行判定）
 
 - **「结束进程」按钮 + `acm kill`**：详情页「运行状态」旁边新增按钮（确认框列出将被结束的进程名，完成后自动重扫）。内核 `procs::kill_agent_processes` 走 `taskkill /F /T /IM`（连杀子进程树），CLI 同步 `acm kill <id> [--yes] [--json]`。为什么需要它：`tasklist` 是名字匹配的兜底手段，偶尔漏（进程刚起 / 权限 / 名字对不上），界面上就会「明明关了还说在跑」，迁移也被拦着 —— 与其让用户去任务管理器里翻，不如给一个明确目标。

@@ -134,6 +134,10 @@ class    = "normal"
 paths    = ["%APPDATA%/Cursor", "%LOCALAPPDATA%/Cursor"]
 processes = ["Cursor.exe"]
 skip     = ["logs/**", "CachedData/**", "Code Cache/**", "GPUCache/**", "Crashpad/**"]
+# VS Code 系（Chromium）认 --user-data-dir：官方论坛给的做法就是改快捷方式，不建联接。
+# 注意：换目录等于换 profile，聊天/设置会跟着搬，但扩展要重装（这里只搬 userData）。
+launch_args     = ["--user-data-dir={dest}"]
+shortcut_exes   = ["Cursor.exe"]
 
 
 # ───────────────────────────── 其他国内 Agent ─────────────────────────────
@@ -145,7 +149,10 @@ vendor   = "腾讯"
 kind     = "electron"
 class    = "normal"
 paths    = ["%APPDATA%/CodeBuddy CN"]
-processes = ["CodeBuddy.exe"]
+# ⚠️ 国内版的实际进程名是「CodeBuddy CN.exe」（实测），只写 CodeBuddy.exe 会永远判「未运行」
+processes = ["CodeBuddy CN.exe", "CodeBuddy.exe"]
+launch_args     = ["--user-data-dir={dest}"]
+shortcut_exes   = ["CodeBuddy CN.exe"]
 
 [[agent]]
 id       = "trae"
@@ -154,9 +161,12 @@ vendor   = "字节跳动"
 kind     = "electron"
 class    = "normal"
 paths    = ["%APPDATA%/Trae CN"]
-processes = ["Trae.exe"]
+# 国内版 exe 名是「Trae CN.exe」（实测），不能只写 Trae.exe
+processes = ["Trae CN.exe", "Trae.exe"]
 # 卸载清单里的 DisplayName 就是「TRAE CN (User)」（大小写不敏感）
 install  = { uninstall = ["TRAE CN (User)"] }
+launch_args     = ["--user-data-dir={dest}"]
+shortcut_exes   = ["Trae CN.exe"]
 
 [[agent]]
 id       = "zcode"
@@ -272,6 +282,10 @@ class    = "normal"
 paths    = ["%APPDATA%/CherryStudio"]
 updater  = ["cherrystudio-updater"]
 processes = ["CherryStudio.exe"]
+# Cherry 官方文档给了两种做法：建软链接，或者 `--user-data-dir` 启动。
+# 后者更干净（原目录不留东西），所以这里声明出来，界面会优先推荐它。
+launch_args     = ["--user-data-dir={dest}"]
+shortcut_exes   = ["CherryStudio.exe", "Cherry-Studio.exe"]
 
 [[agent]]
 id       = "utools"
@@ -312,10 +326,12 @@ vendor   = "字节跳动"
 kind     = "electron"
 class    = "normal"
 paths    = ["%APPDATA%/Trae"]
-processes = ["Trae.exe"]
+processes = ["Trae.exe", "Trae CN.exe"]
 # ⚠️ 必须写全名式的「Trae」而**不能**写 "Trae" 前缀去匹配 TRAE CN (User)：
 #    名字匹配只认「全等」或「名字 + 空格 + 数字版本号」
 install  = { uninstall = ["Trae"] }
+launch_args     = ["--user-data-dir={dest}"]
+shortcut_exes   = ["Trae.exe"]
 
 [[agent]]
 id       = "codebuddy-intl"
@@ -324,7 +340,9 @@ vendor   = "腾讯"
 kind     = "electron"
 class    = "normal"
 paths    = ["%APPDATA%/CodeBuddy"]
-processes = ["CodeBuddy.exe"]
+processes = ["CodeBuddy.exe", "CodeBuddy CN.exe"]
+launch_args     = ["--user-data-dir={dest}"]
+shortcut_exes   = ["CodeBuddy.exe"]
 
 
 # ───────────────────────────── 缓存类（class="safe"）示例 ─────────────────────────────
